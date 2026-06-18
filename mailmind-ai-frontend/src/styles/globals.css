@@ -1,0 +1,125 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Brand palette */
+    --brand-green: 152 28% 55%;
+    --brand-green-light: 152 35% 67%;
+    --brand-green-soft: 152 45% 89%;
+    --brand-bg: 120 20% 97%;
+    --brand-text: 215 28% 17%;
+    --brand-muted: 215 16% 47%;
+
+    /* Semantic tokens */
+    --background: 120 20% 97%;
+    --foreground: 215 28% 17%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 28% 17%;
+    --primary: 152 28% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 152 35% 67%;
+    --secondary-foreground: 215 28% 17%;
+    --muted: 120 10% 94%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 152 45% 89%;
+    --accent-foreground: 215 28% 17%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 120 8% 88%;
+    --input: 120 8% 88%;
+    --ring: 152 28% 55%;
+    --radius: 0.875rem;
+
+    /* Typography scale */
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-base: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.25rem;
+    --text-2xl: 1.5rem;
+    --text-3xl: 1.875rem;
+    --text-4xl: 2.25rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight text-foreground;
+  }
+}
+
+@layer components {
+  .surface-page {
+    @apply min-h-screen bg-brand-bg;
+    background-image: radial-gradient(circle at 1px 1px, hsl(120 8% 88% / 0.5) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+
+  .surface-glass {
+    @apply border border-white/70 bg-white/75 shadow-card backdrop-blur-xl;
+  }
+
+  .surface-card {
+    @apply rounded-2xl border bg-card shadow-card transition-shadow duration-200 hover:shadow-soft;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200;
+  }
+
+  .nav-item-active {
+    @apply bg-brand-green-soft text-brand-text shadow-sm;
+  }
+
+  .nav-item-inactive {
+    @apply text-brand-muted hover:bg-white/60 hover:text-brand-text;
+  }
+
+  .heading-page {
+    @apply text-xl font-bold tracking-tight text-brand-text sm:text-2xl;
+  }
+
+  .text-body {
+    @apply text-sm leading-relaxed text-brand-muted;
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .animate-in {
+    animation: animate-in 0.3s ease-out;
+  }
+
+  @keyframes animate-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}

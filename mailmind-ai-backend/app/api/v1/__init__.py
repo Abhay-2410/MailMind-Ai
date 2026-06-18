@@ -1,0 +1,1 @@
+﻿"""MailMind AI backend package."""
