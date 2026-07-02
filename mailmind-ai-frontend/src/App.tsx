@@ -9,7 +9,6 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { EmailPage } from "@/pages/EmailPage";
 import { InboxPage } from "@/pages/InboxPage";
 import { LoginPage } from "@/pages/LoginPage";
-import { SearchPage } from "@/pages/SearchPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 
 export default function App() {
@@ -29,7 +28,6 @@ export default function App() {
           <Route path={ROUTES.INBOX} element={<InboxPage />} />
           <Route path={`${ROUTES.EMAIL}/:id`} element={<EmailPage />} />
           <Route path={ROUTES.ASSISTANT} element={<AssistantPage />} />
-          <Route path={ROUTES.SEARCH} element={<SearchPage />} />
           <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
         </Route>
       </Route>

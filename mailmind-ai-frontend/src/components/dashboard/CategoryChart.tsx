@@ -1,6 +1,7 @@
 ﻿import { motion } from "framer-motion";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatNumber } from "@/lib/format";
 import type { CategoryStat } from "@/types/dashboard";
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -11,26 +12,31 @@ const CATEGORY_COLORS: Record<string, string> = {
   promotions: "bg-slate-400",
   social: "bg-violet-400",
   updates: "bg-amber-400",
+  uncategorized: "bg-gray-300",
 };
 
 interface CategoryChartProps {
   categories: CategoryStat[];
+  totalEmails: number;
 }
 
-export function CategoryChart({ categories }: CategoryChartProps) {
+export function CategoryChart({ categories, totalEmails }: CategoryChartProps) {
   const withData = categories.filter((c) => c.count > 0);
-  const maxCount = Math.max(...withData.map((c) => c.count), 1);
 
   return (
     <Card className="surface-card h-full">
       <CardHeader>
         <CardTitle className="text-lg">Category Analytics</CardTitle>
-        <CardDescription>How your emails are classified by AI</CardDescription>
+        <CardDescription>
+          {totalEmails > 0
+            ? `Breakdown of ${formatNumber(totalEmails)} synced Gmail emails`
+            : "Sync your inbox to see category breakdown"}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {withData.length === 0 ? (
           <p className="py-8 text-center text-body">
-            No categorized emails yet. Sync your inbox and run AI categorization.
+            No categorized emails yet. Sync your inbox to classify your Gmail messages.
           </p>
         ) : (
           <div className="space-y-4">
@@ -50,7 +56,7 @@ export function CategoryChart({ categories }: CategoryChartProps) {
                 <div className="h-2.5 overflow-hidden rounded-full bg-muted">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${CATEGORY_COLORS[item.category] ?? "bg-brand-green"}`}
-                    style={{ width: `${(item.count / maxCount) * 100}%` }}
+                    style={{ width: `${Math.min(item.percentage, 100)}%` }}
                   />
                 </div>
               </motion.div>

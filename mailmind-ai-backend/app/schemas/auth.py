@@ -26,6 +26,9 @@ class GoogleOAuthConfigResponse(BaseModel):
     backend_public_url: str
     frontend_callback_url: str
     google_configured: bool
+    required_redirect_uris: list[str] = []
+    authorized_origins: list[str] = []
+    google_console_url: str = "https://console.cloud.google.com/apis/credentials"
 
 
 class TokenResponse(BaseModel):

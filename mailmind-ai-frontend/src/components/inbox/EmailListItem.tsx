@@ -22,7 +22,7 @@ export function EmailListItem({ email }: EmailListItemProps) {
       to={`${ROUTES.EMAIL}/${email.id}`}
       className={cn(
         "group flex gap-3 border-b border-border px-4 py-4 transition-colors hover:bg-accent/60 sm:gap-4 sm:px-5",
-        !email.is_read && "bg-brand-green-soft/30",
+        !email.is_read && "bg-brand-green-soft/25 dark:bg-brand-green-soft/15",
       )}
     >
       <Avatar className="h-10 w-10">

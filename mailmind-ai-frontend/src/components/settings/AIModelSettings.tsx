@@ -42,7 +42,7 @@ export function AIModelSettings({ settings }: AIModelSettingsProps) {
           <Bot className="h-5 w-5 text-brand-green" />
           AI model
         </CardTitle>
-        <CardDescription>Choose the model used for summaries, replies, search, and assistant</CardDescription>
+        <CardDescription>Choose the model used for summaries, replies, and assistant</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (
@@ -53,7 +53,7 @@ export function AIModelSettings({ settings }: AIModelSettingsProps) {
             <select
               value={selectedModel}
               onChange={(event) => setSelectedModel(event.target.value)}
-              className="h-10 w-full rounded-xl border border-input bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="select-surface h-10 w-full rounded-xl px-3 text-sm"
             >
               {(models ?? []).map((model) => (
                 <option key={model.id} value={model.id}>

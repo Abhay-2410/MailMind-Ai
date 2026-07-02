@@ -17,6 +17,8 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -and ($_.CommandLine -match "vite\.js" -or $_.CommandLine -match "mailmind-ai-frontend") } |
   ForEach-Object { cmd /c "taskkill /F /PID $($_.ProcessId) /T 2>nul" | Out-Null }
 Start-Sleep -Seconds 1
+Stop-PortListeners -Port 5173
+Start-Sleep -Seconds 1
 
 Set-Location $frontend
 Write-Host "MailMind frontend starting at http://localhost:5173" -ForegroundColor Cyan

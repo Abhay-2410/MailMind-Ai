@@ -31,6 +31,33 @@ def parse_ai_json(content: str) -> dict[str, Any]:
     raise ValueError("no JSON object found in AI response")
 
 
+def parse_ai_json_array(content: str) -> list[dict[str, Any]]:
+    """Parse a JSON array from an AI response, tolerating markdown fences."""
+    text = content.strip()
+    if not text:
+        raise ValueError("empty AI response")
+
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+    if fence:
+        text = fence.group(1).strip()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find("[")
+    end = text.rfind("]")
+    if start != -1 and end > start:
+        parsed = json.loads(text[start : end + 1])
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+
+    raise ValueError("no JSON array found in AI response")
+
+
 def coerce_str_list(value: Any) -> list[str]:
     if value is None:
         return []

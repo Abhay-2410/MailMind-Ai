@@ -5,6 +5,7 @@ import { ChatMessage } from "@/components/assistant/ChatMessage";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAskAssistant } from "@/hooks/useAssistant";
+import { MIN_ASSISTANT_QUESTION_LENGTH, mapAssistantError } from "@/lib/assistantErrors";
 import { cn } from "@/lib/utils";
 import { useAssistantStore } from "@/stores/assistantStore";
 import { ASSISTANT_SUGGESTIONS } from "@/types/ai";
@@ -13,12 +14,29 @@ function createMessageId(): string {
   return crypto.randomUUID();
 }
 
-export function ChatPanel() {
-  const [input, setInput] = useState("");
+export function ChatPanel({ initialMessage }: { initialMessage?: string }) {
+  const [input, setInput] = useState(initialMessage ?? "");
+  const [inputError, setInputError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const initialSentRef = useRef(false);
   const { messages, addMessage, clearMessages } = useAssistantStore();
   const askMutation = useAskAssistant();
+
+  useEffect(() => {
+    if (initialMessage && !initialSentRef.current && messages.length === 0) {
+      initialSentRef.current = true;
+      void submitQuestion(initialMessage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time bootstrap from URL
+  }, [initialMessage, messages.length]);
+
+  useEffect(() => {
+    if (messages.length === 0 && !initialMessage) {
+      setInput("");
+      initialSentRef.current = false;
+    }
+  }, [messages.length, initialMessage]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -27,6 +45,13 @@ export function ChatPanel() {
   async function submitQuestion(question: string) {
     const trimmed = question.trim();
     if (!trimmed || askMutation.isPending) return;
+
+    if (trimmed.length < MIN_ASSISTANT_QUESTION_LENGTH) {
+      setInputError("Please enter at least 3 characters.");
+      return;
+    }
+
+    setInputError(null);
 
     addMessage({
       id: createMessageId(),
@@ -49,7 +74,7 @@ export function ChatPanel() {
       addMessage({
         id: createMessageId(),
         role: "assistant",
-        content: error instanceof Error ? error.message : "Something went wrong. Please try again.",
+        content: mapAssistantError(error),
         created_at: new Date().toISOString(),
         is_error: true,
       });
@@ -108,7 +133,7 @@ export function ChatPanel() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="rounded-full bg-white"
+                    className="rounded-full bg-background"
                     onClick={() => void submitQuestion(suggestion)}
                     disabled={askMutation.isPending}
                   >
@@ -135,24 +160,30 @@ export function ChatPanel() {
 
         <form
           onSubmit={handleSubmit}
-          className="border-t border-border bg-white/80 p-4 backdrop-blur sm:px-6"
+          className="surface-chrome border-t p-4 sm:px-6"
         >
           <div className="flex gap-3">
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) => {
+                setInput(event.target.value);
+                if (inputError) setInputError(null);
+              }}
               onKeyDown={handleKeyDown}
               placeholder="Ask about your inbox…"
               rows={2}
               disabled={askMutation.isPending}
               className={cn(
-                "min-h-[44px] flex-1 resize-none rounded-xl border border-input bg-white px-3 py-2 text-sm shadow-sm",
-                "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "input-surface min-h-[44px] flex-1 resize-none rounded-xl px-3 py-2 text-sm",
                 "disabled:cursor-not-allowed disabled:opacity-50",
               )}
             />
-            <Button type="submit" disabled={!input.trim() || askMutation.isPending} className="self-end">
+            <Button
+              type="submit"
+              disabled={!input.trim() || askMutation.isPending}
+              className="self-end"
+            >
               {askMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -160,7 +191,13 @@ export function ChatPanel() {
               )}
             </Button>
           </div>
-          <p className="mt-2 text-xs text-brand-muted">Press Enter to send, Shift+Enter for a new line.</p>
+          {inputError ? (
+            <p className="mt-2 text-xs text-destructive">{inputError}</p>
+          ) : (
+            <p className="mt-2 text-xs text-brand-muted">
+              Press Enter to send, Shift+Enter for a new line.
+            </p>
+          )}
         </form>
       </CardContent>
     </Card>

@@ -16,7 +16,9 @@ CSRF_EXEMPT_PATHS = {
     "/api/v1/auth/dev/login",
     "/api/v1/auth/refresh",
     "/api/v1/auth/logout",
+    "/api/v1/auth/google/reconnect",
     "/api/v1/inbox/sync",
+    "/api/v1/cleanup",
     "/api/v1/ai/summarize",
     "/api/v1/ai/reply",
     "/api/v1/ai/categorize",
@@ -53,7 +55,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 )
             return response
 
-        if path in CSRF_EXEMPT_PATHS:
+        if path in CSRF_EXEMPT_PATHS or path.startswith("/api/v1/cleanup"):
             return await call_next(request)
 
         cookie_token = request.cookies.get(CSRF_COOKIE_NAME)

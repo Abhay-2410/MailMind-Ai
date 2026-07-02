@@ -17,6 +17,7 @@ JSONDict = JSON().with_variant(JSONB(), "postgresql")
 
 class ThemePreference(str, enum.Enum):
     LIGHT = "light"
+    DARK = "dark"
     SYSTEM = "system"
 
 

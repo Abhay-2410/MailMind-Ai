@@ -69,8 +69,9 @@ async def test_dashboard_stats(db_session: AsyncSession) -> None:
     assert dashboard.stats.important_emails == 1
     assert dashboard.stats.ai_actions_saved == 1
     assert dashboard.stats.categorized_emails == 1
-    assert len(dashboard.categories) == 7
-    assert dashboard.categories[0].count >= 1
+    assert len(dashboard.categories) == 2
+    assert dashboard.categories[0].category == "important"
+    assert dashboard.categories[0].percentage == 50.0
     assert len(dashboard.recent_activity) >= 1
 
 

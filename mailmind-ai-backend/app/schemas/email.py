@@ -40,6 +40,7 @@ class EmailListItem(BaseModel):
     is_starred: bool
     is_important: bool
     category: EmailCategoryLabel | None = None
+    summary_text: str | None = None
 
 
 class EmailDetail(EmailListItem):
@@ -58,8 +59,9 @@ class EmailListResponse(BaseModel):
 
 
 class SyncInboxRequest(BaseModel):
-    max_results: int = Field(default=50, ge=1, le=500)
+    max_results: int = Field(default=100, ge=1, le=500)
     sync_all: bool = False
+    incremental: bool = False
     query: str | None = Field(default=None, max_length=500)
 
 
@@ -68,4 +70,17 @@ class SyncInboxResponse(BaseModel):
     new_count: int
     updated_count: int
     account_email: str
-    last_synced_at: datetime
+    last_synced_at: datetime | None = None
+    background: bool = False
+    status: str = "completed"
+
+
+class SyncStatusResponse(BaseModel):
+    status: str
+    listed_count: int = 0
+    fetched_count: int = 0
+    new_count: int = 0
+    updated_count: int = 0
+    error: str | None = None
+    last_synced_at: datetime | None = None
+    account_email: str | None = None

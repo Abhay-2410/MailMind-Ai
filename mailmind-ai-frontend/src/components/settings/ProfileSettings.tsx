@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { useUpdateSettings } from "@/hooks/useSettings";
 import { getSenderInitials } from "@/lib/format";
-import { THEME_OPTIONS, TIMEZONE_OPTIONS, type SettingsResponse } from "@/types/settings";
+import { applyTheme } from "@/lib/theme";
+import { THEME_OPTIONS, TIMEZONE_OPTIONS, type SettingsResponse, type ThemePreference } from "@/types/settings";
 
 interface ProfileSettingsProps {
   settings: SettingsResponse;
@@ -79,7 +80,7 @@ export function ProfileSettings({ settings }: ProfileSettingsProps) {
             <select
               value={timezone}
               onChange={(event) => setTimezone(event.target.value)}
-              className="h-10 w-full rounded-xl border border-input bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="select-surface h-10 w-full rounded-xl px-3 text-sm"
             >
               {TIMEZONE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -92,8 +93,12 @@ export function ProfileSettings({ settings }: ProfileSettingsProps) {
             <span className="text-sm font-medium text-brand-text">Theme</span>
             <select
               value={theme}
-              onChange={(event) => setTheme(event.target.value as typeof theme)}
-              className="h-10 w-full rounded-xl border border-input bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onChange={(event) => {
+                const next = event.target.value as ThemePreference;
+                setTheme(next);
+                applyTheme(next);
+              }}
+              className="select-surface h-10 w-full rounded-xl px-3 text-sm"
             >
               {THEME_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>

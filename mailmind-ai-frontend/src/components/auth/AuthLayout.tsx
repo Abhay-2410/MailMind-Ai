@@ -26,7 +26,7 @@ export function AuthLayout({
         <div className="surface-glass rounded-3xl p-8 sm:p-10">
           <div className="mb-8 text-center">
             <Link to="/" className="mb-6 inline-flex items-center justify-center gap-2">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-green-soft shadow-glow">
+              <div className="brand-icon-surface flex h-11 w-11 items-center justify-center rounded-2xl">
                 <Sparkles className="h-5 w-5 text-brand-green" />
               </div>
             </Link>

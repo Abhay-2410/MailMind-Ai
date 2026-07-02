@@ -30,11 +30,11 @@ export function SecuritySettings({ settings }: SecuritySettingsProps) {
         <CardDescription>Session and account security</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="rounded-xl border border-border bg-white/70 p-4 text-sm">
-          <p className="text-brand-text">
+        <div className="surface-panel p-4 text-sm">
+          <p className="text-foreground">
             <span className="font-medium">Account:</span> {settings.email}
           </p>
-          <p className="mt-2 text-brand-muted">
+          <p className="mt-2 text-muted-foreground">
             Sessions use secure JWT access tokens with HTTP-only refresh cookies. Gmail OAuth tokens
             are encrypted at rest.
           </p>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { AuthLayout } from "@/components/auth/AuthLayout";
+import { OAuthSetupHint } from "@/components/auth/OAuthSetupHint";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
@@ -30,6 +31,9 @@ export function AuthCallbackPage() {
   }, [code, error, exchangeSessionCode, navigate]);
 
   const displayError = error ?? exchangeError;
+  const oauthMismatch =
+    displayError?.toLowerCase().includes("redirect_uri") ||
+    displayError?.toLowerCase().includes("invalid request");
 
   if (displayError) {
     return (
@@ -37,7 +41,8 @@ export function AuthCallbackPage() {
         <p className="mb-6 rounded-xl bg-red-50 px-4 py-3 text-center text-sm text-destructive">
           {displayError}
         </p>
-        <Button className="w-full" onClick={() => navigate(ROUTES.LOGIN, { replace: true })}>
+        <OAuthSetupHint showMismatchHelp={oauthMismatch} />
+        <Button className="mt-4 w-full" onClick={() => navigate(ROUTES.LOGIN, { replace: true })}>
           Back to login
         </Button>
       </AuthLayout>

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiRequest } from "@/lib/api";
+import { applyTheme } from "@/lib/theme";
 import type { AIModelOption } from "@/types/settings";
 import type { SettingsResponse, UpdateSettingsPayload } from "@/types/settings";
 
@@ -19,10 +20,11 @@ export async function fetchAIModels(): Promise<AIModelOption[]> {
   return apiRequest<AIModelOption[]>("/ai/models");
 }
 
-export function useSettings() {
+export function useSettings(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["settings"],
     queryFn: fetchSettings,
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -41,6 +43,9 @@ export function useUpdateSettings() {
     mutationFn: updateSettings,
     onSuccess: (data) => {
       queryClient.setQueryData(["settings"], data);
+      if (data.theme) {
+        applyTheme(data.theme);
+      }
     },
   });
 }

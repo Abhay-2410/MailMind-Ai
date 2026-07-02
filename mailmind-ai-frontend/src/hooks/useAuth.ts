@@ -1,11 +1,12 @@
-﻿import { useAuthStore } from "@/stores/authStore";
+﻿import { API_BASE_URL } from "@/lib/api";
+import { useAuthStore } from "@/stores/authStore";
 
 export function useAuth() {
   const store = useAuthStore();
 
-  const loginWithGoogle = async () => {
-    const { authorization_url } = await store.fetchGoogleLoginUrl();
-    window.location.assign(authorization_url);
+  const loginWithGoogle = () => {
+    const origin = encodeURIComponent(window.location.origin);
+    window.location.assign(`${API_BASE_URL}/auth/google/login/redirect?origin=${origin}`);
   };
 
   const loginDev = async () => {

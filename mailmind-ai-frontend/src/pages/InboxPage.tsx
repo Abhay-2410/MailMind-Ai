@@ -1,74 +1,96 @@
-﻿import { useMutation, useQueryClient } from "@tanstack/react-query";
+﻿import { useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 
 import { EmailList } from "@/components/inbox/EmailList";
 import { InboxFilters } from "@/components/inbox/InboxFilters";
+import { SummariesList } from "@/components/inbox/SummariesList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useInbox, syncInbox } from "@/hooks/useEmails";
+import { useAutoSync } from "@/hooks/useAutoSync";
+import { useInbox } from "@/hooks/useEmails";
+import { useInboxView } from "@/hooks/useInboxView";
+import { ROUTES } from "@/lib/constants";
 import { formatNumber } from "@/lib/format";
+import { SYNC_BUTTON_LABEL } from "@/lib/navigation";
 import { useInboxStore } from "@/stores/inboxStore";
 
 export function InboxPage() {
-  const queryClient = useQueryClient();
-  const { page, setPage } = useInboxStore();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { view, meta } = useInboxView();
+  const { page, setPage, setViewFilter, setCategory, setSearch } = useInboxStore();
   const { data, isLoading, isFetching, isError, refetch } = useInbox();
+  const { isSyncing, syncDetail, syncStatus, triggerFullSync } = useAutoSync();
 
-  const syncMutation = useMutation({
-    mutationFn: () => syncInbox({ syncAll: true, maxResults: 200 }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-  });
+  useEffect(() => {
+    if (searchParams.get("view") === "categories") {
+      navigate(`${ROUTES.DASHBOARD}?section=insights`, { replace: true });
+      return;
+    }
+    setPage(1);
+    setSearch("");
+    setViewFilter("all");
+    setCategory("all");
+  }, [navigate, searchParams, setCategory, setPage, setSearch, setViewFilter]);
 
-  const lastSynced = syncMutation.data?.last_synced_at
-    ? new Date(syncMutation.data.last_synced_at).toLocaleString(undefined, {
+  const lastSyncedLabel = syncStatus?.last_synced_at
+    ? `Last synced ${new Date(syncStatus.last_synced_at).toLocaleString(undefined, {
         month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
-      })
-    : null;
+      })}`
+    : "Pull the latest messages from Gmail";
+
+  const statusLine = isSyncing ? syncDetail ?? "Syncing inbox…" : lastSyncedLabel;
+
+  const listProps = {
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    onRetry: () => void refetch(),
+    onSync: triggerFullSync,
+    isSyncing,
+    page,
+    onPageChange: setPage,
+  };
 
   return (
     <div className="space-y-6">
+      <div className="surface-panel px-4 py-3 sm:px-5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand-green">{meta.eyebrow}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{meta.description}</p>
+      </div>
+
       <Card className="surface-card">
         <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
           <div>
             <p className="text-sm font-medium text-brand-text">
-              {data ? `${formatNumber(data.total)} emails` : "Loading inbox…"}
+              {data ? `${formatNumber(data.total)} emails` : "Loading…"}
             </p>
-            <p className="text-sm text-brand-muted">
-              {syncMutation.isSuccess
-                ? `Synced ${formatNumber(syncMutation.data.new_count)} new · ${lastSynced}`
-                : "Pull the latest messages from Gmail"}
-            </p>
+            <p className="text-sm text-brand-muted">{statusLine}</p>
           </div>
           <Button
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            className="shrink-0"
+            onClick={triggerFullSync}
+            disabled={isSyncing}
+            className="inline-flex shrink-0 items-center justify-center gap-2"
           >
-            <RefreshCw className={`mr-2 h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-            {syncMutation.isPending ? "Syncing…" : "Sync Inbox"}
+            <RefreshCw className={`h-4 w-4 shrink-0 ${isSyncing ? "animate-spin" : ""}`} />
+            <span>{isSyncing ? SYNC_BUTTON_LABEL.running : SYNC_BUTTON_LABEL.idle}</span>
           </Button>
         </CardContent>
       </Card>
 
-      <InboxFilters />
+      {view === "inbox" ? (
+        <>
+          <InboxFilters />
+          <EmailList {...listProps} />
+        </>
+      ) : null}
 
-      <EmailList
-        data={data}
-        isLoading={isLoading}
-        isFetching={isFetching}
-        isError={isError}
-        onRetry={() => void refetch()}
-        onSync={() => syncMutation.mutate()}
-        isSyncing={syncMutation.isPending}
-        page={page}
-        onPageChange={setPage}
-      />
+      {view === "summaries" ? <SummariesList {...listProps} /> : null}
     </div>
   );
 }

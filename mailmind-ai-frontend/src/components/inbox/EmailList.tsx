@@ -32,7 +32,7 @@ export function EmailList({
 }: EmailListProps) {
   if (isLoading) {
     return (
-      <div className="divide-y divide-border rounded-2xl border border-border bg-white/80">
+      <div className="surface-list divide-y divide-border">
         {Array.from({ length: 6 }).map((_, index) => (
           <div key={index} className="flex gap-4 px-5 py-4">
             <Skeleton className="h-10 w-10 rounded-full" />
@@ -90,7 +90,7 @@ export function EmailList({
   return (
     <div className="space-y-4">
       <div
-        className={`overflow-hidden rounded-2xl border border-border bg-white/80 shadow-sm transition-opacity ${isFetching ? "opacity-70" : ""}`}
+        className={`surface-list transition-opacity ${isFetching ? "opacity-70" : ""}`}
       >
         {data.items.map((email) => (
           <EmailListItem key={email.id} email={email} />

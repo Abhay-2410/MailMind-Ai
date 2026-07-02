@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class ThemePreference(str, Enum):
     LIGHT = "light"
+    DARK = "dark"
     SYSTEM = "system"
 
 

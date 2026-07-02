@@ -1,6 +1,6 @@
 # MailMind AI
 
-AI-powered Gmail copilot for summaries, replies, categorization, natural language search, and inbox chat.
+AI-powered Gmail copilot for summaries, replies, categorization, and inbox chat.
 
 ## Structure
 
@@ -37,7 +37,6 @@ Prerequisites: PostgreSQL (`mailmind` DB), Redis, Google OAuth, and OpenRouter A
 | `/api/v1/inbox` | List emails, sync Gmail |
 | `/api/v1/emails` | Single email detail |
 | `/api/v1/ai` | Summarize, reply, categorize, assistant |
-| `/api/v1/search` | Natural language search |
 | `/api/v1/dashboard` | Stats and category analytics |
 | `/api/v1/settings` | User preferences |
 

@@ -21,8 +21,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
       <div
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-          isUser ? "bg-brand-green text-white" : "bg-brand-green-soft text-brand-green",
-          message.is_error && "bg-red-50 text-red-600",
+          isUser ? "bg-brand-green text-primary-foreground" : "bg-brand-green-soft text-brand-green",
+          message.is_error && "bg-destructive/15 text-destructive",
         )}
       >
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
@@ -33,10 +33,10 @@ export function ChatMessage({ message }: ChatMessageProps) {
           className={cn(
             "rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm",
             isUser
-              ? "rounded-tr-md bg-brand-green text-white"
+              ? "rounded-tr-md bg-brand-gradient text-primary-foreground"
               : message.is_error
-                ? "rounded-tl-md border border-red-200 bg-red-50 text-red-700"
-                : "rounded-tl-md border border-border bg-white text-brand-text",
+                ? "rounded-tl-md border border-destructive/30 bg-destructive/10 text-destructive"
+                : "rounded-tl-md border border-border bg-card text-foreground",
           )}
         >
           <p className="whitespace-pre-wrap">{message.content}</p>

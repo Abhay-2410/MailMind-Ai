@@ -78,7 +78,7 @@ export function InboxFilters() {
               onClick={() => setViewFilter(filter.value)}
               className={cn(
                 "rounded-full",
-                viewFilter !== filter.value && "bg-white hover:bg-accent",
+                viewFilter !== filter.value && "bg-background hover:bg-accent",
               )}
             >
               {filter.label}
@@ -89,7 +89,7 @@ export function InboxFilters() {
         <select
           value={category}
           onChange={(event) => setCategory(event.target.value as typeof category)}
-          className="h-9 rounded-xl border border-input bg-white px-3 text-sm text-brand-text shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="select-surface h-9 rounded-xl px-3 text-sm"
           aria-label="Filter by category"
         >
           {EMAIL_CATEGORY_OPTIONS.map((option) => (

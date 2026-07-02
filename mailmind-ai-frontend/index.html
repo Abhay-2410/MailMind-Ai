@@ -12,6 +12,16 @@
       rel="stylesheet"
     />
     <title>MailMind AI</title>
+    <script>
+      (function () {
+        var theme = localStorage.getItem("mailmind-theme");
+        var dark =
+          theme === "dark" ||
+          (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.classList.add("dark");
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

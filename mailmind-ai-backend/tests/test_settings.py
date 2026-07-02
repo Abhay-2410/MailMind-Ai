@@ -66,6 +66,23 @@ async def test_update_settings(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_settings_dark_theme(db_session: AsyncSession) -> None:
+    user = User(email="dark@example.com", google_id="g-dark", is_active=True)
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    service = SettingsService()
+    updated = await service.update_settings(
+        db_session,
+        user,
+        UpdateSettingsRequest(theme=ThemePreference.DARK),
+    )
+
+    assert updated.theme == ThemePreference.DARK
+
+
+@pytest.mark.asyncio
 async def test_settings_api_requires_auth(client: AsyncClient) -> None:
     response = await client.get("/api/v1/settings")
     assert response.status_code == 401

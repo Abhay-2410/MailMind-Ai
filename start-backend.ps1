@@ -62,6 +62,60 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 Start-Sleep -Seconds 1
 
 Set-Location $backend
+
+Write-Host "Checking database connectivity..." -ForegroundColor Cyan
+& ".\.venv\Scripts\python.exe" -c @"
+import asyncio
+import sys
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from app.core.config import get_settings
+
+async def main() -> None:
+    settings = get_settings()
+    engine = create_async_engine(settings.DATABASE_URL)
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text('SELECT 1'))
+    finally:
+        await engine.dispose()
+
+asyncio.run(main())
+"@
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Cannot reach PostgreSQL. Start it with: docker compose up -d postgres redis" -ForegroundColor Red
+  exit 1
+}
+
+Write-Host "Running database migrations..." -ForegroundColor Cyan
+& ".\.venv\Scripts\alembic.exe" upgrade head
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Database migration failed. Check PostgreSQL is running and DATABASE_URL in .env." -ForegroundColor Red
+  exit 1
+}
+
+Write-Host "Checking Redis connectivity..." -ForegroundColor Cyan
+& ".\.venv\Scripts\python.exe" -c @"
+import asyncio
+import sys
+from app.core.config import get_settings
+from app.core.redis import init_redis, close_redis
+
+async def main() -> None:
+    settings = get_settings()
+    client = await init_redis(settings)
+    try:
+        await client.ping()
+    finally:
+        await close_redis()
+
+asyncio.run(main())
+"@
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Cannot reach Redis. Start it with: docker compose up -d redis" -ForegroundColor Red
+  exit 1
+}
+
 Write-Host ""
 Write-Host "MailMind backend starting..." -ForegroundColor Cyan
 Write-Host "  API:    http://localhost:$port" -ForegroundColor Green

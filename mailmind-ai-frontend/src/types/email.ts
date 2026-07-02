@@ -10,6 +10,7 @@
   is_starred: boolean;
   is_important: boolean;
   category: string | null;
+  summary_text?: string | null;
 }
 
 export interface EmailDetail extends EmailListItem {
@@ -32,5 +33,18 @@ export interface SyncInboxResponse {
   new_count: number;
   updated_count: number;
   account_email: string;
-  last_synced_at: string;
+  last_synced_at: string | null;
+  background?: boolean;
+  status?: string;
+}
+
+export interface SyncStatusResponse {
+  status: string;
+  listed_count: number;
+  fetched_count: number;
+  new_count: number;
+  updated_count: number;
+  error: string | null;
+  last_synced_at: string | null;
+  account_email: string | null;
 }

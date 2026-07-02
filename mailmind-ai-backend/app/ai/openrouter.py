@@ -142,6 +142,20 @@ class OpenRouterProvider(AIProvider):
         raise AppError(last_error, status_code=502)
 
     @staticmethod
+    def _sanitize_provider_message(message: str) -> str:
+        lowered = message.lower()
+        if "credit" in lowered or "afford" in lowered or "max_tokens" in lowered:
+            return (
+                "AI credits are too low for this request. "
+                "Add credits at openrouter.ai or choose a cheaper model in Settings."
+            )
+        if "rate" in lowered and "limit" in lowered:
+            return "The AI model is rate-limited right now. Please try again in a moment."
+        if len(message) > 240:
+            return "The AI provider could not complete this request. Please try again."
+        return message
+
+    @staticmethod
     def _extract_error_message(response: httpx.Response) -> str:
         try:
             body = response.json()
@@ -151,9 +165,9 @@ class OpenRouterProvider(AIProvider):
                 metadata = error.get("metadata", {})
                 raw = metadata.get("raw") if isinstance(metadata, dict) else None
                 if raw:
-                    return str(raw)
+                    return OpenRouterProvider._sanitize_provider_message(str(raw))
                 if message:
-                    return str(message)
+                    return OpenRouterProvider._sanitize_provider_message(str(message))
         except (ValueError, AttributeError):
             pass
         if response.status_code == 429:

@@ -21,7 +21,7 @@ async def test_google_login_returns_authorization_url(client: AsyncClient) -> No
 
     parsed = urlparse(body["authorization_url"])
     query = parse_qs(parsed.query)
-    assert query["redirect_uri"] == [settings.google_oauth_redirect_uri]
+    assert query["redirect_uri"] == ["http://localhost:5173/api/v1/auth/google/callback"]
 
 
 @pytest.mark.asyncio
@@ -33,6 +33,20 @@ async def test_google_oauth_config_endpoint(client: AsyncClient) -> None:
     assert body["redirect_uri"] == settings.google_oauth_redirect_uri
     assert body["backend_public_url"] == settings.BACKEND_PUBLIC_URL
     assert body["google_configured"] is True
+    assert len(body["required_redirect_uris"]) >= 2
+    assert len(body["authorized_origins"]) >= 2
+
+
+@pytest.mark.asyncio
+async def test_google_login_uses_origin_redirect_uri(client: AsyncClient) -> None:
+    response = await client.get(
+        "/api/v1/auth/google/login",
+        params={"origin": "http://localhost:5173"},
+    )
+    assert response.status_code == 200
+    parsed = urlparse(response.json()["authorization_url"])
+    query = parse_qs(parsed.query)
+    assert query["redirect_uri"] == ["http://localhost:5173/api/v1/auth/google/callback"]
 
 
 @pytest.mark.asyncio
@@ -138,6 +152,80 @@ async def test_session_exchange(client: AsyncClient, db_session: AsyncSession) -
 
 
 @pytest.mark.asyncio
+async def test_upsert_user_does_not_revoke_same_refresh_token(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_service = AuthService()
+    tokens = GoogleTokenBundle(
+        access_token="google-access",
+        refresh_token="google-refresh-stable",
+        expires_in=3600,
+        id_token=None,
+        scope="openid email profile https://mail.google.com/",
+    )
+    info = GoogleUserInfo(
+        google_id="gid-revoke-test",
+        email="revoketest@gmail.com",
+        full_name="Revoke Test",
+        avatar_url=None,
+    )
+
+    revoke_calls: list[str] = []
+
+    async def _track_revoke(token: str) -> None:
+        revoke_calls.append(token)
+
+    monkeypatch.setattr(auth_service, "revoke_google_token", _track_revoke)
+
+    await auth_service.upsert_user_from_google(db_session, tokens, info)
+    await auth_service.upsert_user_from_google(db_session, tokens, info)
+
+    assert revoke_calls == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_user_revokes_when_refresh_token_changes(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_service = AuthService()
+    info = GoogleUserInfo(
+        google_id="gid-revoke-change",
+        email="revokechange@gmail.com",
+        full_name="Revoke Change",
+        avatar_url=None,
+    )
+
+    revoke_calls: list[str] = []
+
+    async def _track_revoke(token: str) -> None:
+        revoke_calls.append(token)
+
+    monkeypatch.setattr(auth_service, "revoke_google_token", _track_revoke)
+
+    first = GoogleTokenBundle(
+        access_token="access-1",
+        refresh_token="refresh-old",
+        expires_in=3600,
+        id_token=None,
+        scope="openid email profile https://mail.google.com/",
+    )
+    second = GoogleTokenBundle(
+        access_token="access-2",
+        refresh_token="refresh-new",
+        expires_in=3600,
+        id_token=None,
+        scope="openid email profile https://mail.google.com/",
+    )
+
+    await auth_service.upsert_user_from_google(db_session, first, info)
+    await auth_service.upsert_user_from_google(db_session, second, info)
+
+    assert revoke_calls == ["refresh-old"]
+
+
+@pytest.mark.asyncio
 async def test_upsert_user_from_google(db_session: AsyncSession) -> None:
     auth_service = AuthService()
     tokens = GoogleTokenBundle(
@@ -145,6 +233,7 @@ async def test_upsert_user_from_google(db_session: AsyncSession) -> None:
         refresh_token="google-refresh",
         expires_in=3600,
         id_token=None,
+        scope="openid email profile https://mail.google.com/",
     )
     info = GoogleUserInfo(
         google_id="gid-789",

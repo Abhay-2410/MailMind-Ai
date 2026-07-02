@@ -8,6 +8,8 @@ from app.models.user import User
 from app.schemas.ai import AssistantResponse
 from app.services.ai_service import AIService
 
+ASSISTANT_MAX_TOKENS = 256
+
 
 class AssistantService(AIService):
     async def ask(
@@ -41,7 +43,7 @@ class AssistantService(AIService):
             system_prompt=ASSISTANT_SYSTEM,
             user_prompt=build_assistant_prompt(question=question, context=context),
             temperature=0.3,
-            max_tokens=1500,
+            max_tokens=ASSISTANT_MAX_TOKENS,
         )
 
         await self._track_usage(

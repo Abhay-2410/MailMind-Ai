@@ -71,12 +71,13 @@ async def test_sync_inbox_persists_emails(db_session: AsyncSession) -> None:
 
     mock_gmail = AsyncMock()
     mock_gmail.ensure_valid_access_token = AsyncMock(return_value="access-token")
-    mock_gmail.fetch_messages = AsyncMock(
-        return_value=type("Result", (), {"messages": [gmail_message], "next_page_token": None})()
-    )
+    mock_gmail.list_message_ids = AsyncMock(return_value=(["gmail-1"], None))
+    mock_gmail.fetch_messages_batch = AsyncMock(return_value=[gmail_message])
 
     email_service = EmailService(gmail_service=mock_gmail)
-    result = await email_service.sync_inbox(db_session, user, max_results=10)
+    result, deferred = await email_service.sync_inbox(db_session, user, max_results=10)
+
+    assert deferred == []
 
     assert result.synced_count == 1
     assert result.new_count == 1
@@ -136,3 +137,58 @@ async def test_inbox_list_and_detail(
     )
     assert detail_response.status_code == 200
     assert detail_response.json()["body_text"] == "Hello from Gmail"
+
+
+@pytest.mark.asyncio
+async def test_get_email_returns_preview_when_gmail_fails(
+    db_session: AsyncSession,
+) -> None:
+    from app.core.exceptions import AppError
+    from app.models.email import Email
+
+    user = User(email="preview@example.com", google_id="g-preview", is_active=True)
+    db_session.add(user)
+    await db_session.flush()
+
+    account = Account(
+        user_id=user.id,
+        email="preview@example.com",
+        access_token_encrypted=encrypt_token("token"),
+        refresh_token_encrypted=encrypt_token("refresh"),
+        token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        is_primary=True,
+        is_active=True,
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    email = Email(
+        user_id=user.id,
+        account_id=account.id,
+        gmail_id="gmail-preview-1",
+        sender="sender@example.com",
+        subject="Preview subject",
+        preview="Snippet preview text",
+        received_at=datetime.now(UTC),
+        is_read=True,
+        is_starred=False,
+        is_important=False,
+    )
+    db_session.add(email)
+    await db_session.commit()
+    await db_session.refresh(user)
+    await db_session.refresh(email)
+
+    mock_gmail = AsyncMock()
+    mock_gmail.get_message = AsyncMock(
+        side_effect=AppError(
+            "Gmail session expired. Sign out and sign in with Google again.",
+            status_code=401,
+        )
+    )
+
+    email_service = EmailService(gmail_service=mock_gmail)
+    detail = await email_service.get_email(db_session, user, email.id)
+
+    assert detail.body_text == "Snippet preview text"
+    assert detail.subject == "Preview subject"

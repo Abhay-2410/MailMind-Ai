@@ -54,7 +54,7 @@ export function GmailAccounts({ settings }: GmailAccountsProps) {
 
         {accounts.length === 0 ? (
 
-          <div className="rounded-xl border border-dashed border-border bg-white/50 p-6 text-center">
+          <div className="rounded-xl border border-dashed border-border bg-card/50 p-6 text-center">
 
             <p className="text-sm text-brand-muted">No Gmail account connected.</p>
 
@@ -82,7 +82,7 @@ export function GmailAccounts({ settings }: GmailAccountsProps) {
 
                 key={account.id}
 
-                className="flex flex-col gap-3 rounded-xl border border-border bg-white/70 p-4 sm:flex-row sm:items-center sm:justify-between"
+                className="surface-panel flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
 
               >
 

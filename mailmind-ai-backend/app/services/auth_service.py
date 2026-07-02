@@ -18,13 +18,14 @@ from app.models.account import Account
 from app.models.user import User
 from app.models.user_settings import UserSettings
 from app.schemas.auth import TokenResponse, UserPublic
-from app.utils.encryption import encrypt_token
+from app.utils.encryption import decrypt_token, encrypt_token
 
 OAUTH_STATE_PREFIX = "oauth_state:"
 AUTH_EXCHANGE_PREFIX = "auth_exchange:"
 REFRESH_SESSION_PREFIX = "refresh_session:"
 OAUTH_STATE_TTL = 600
 AUTH_EXCHANGE_TTL = 120
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
 
 @dataclass
@@ -41,6 +42,13 @@ class GoogleTokenBundle:
     refresh_token: str | None
     expires_in: int | None
     id_token: str | None
+    scope: str = ""
+
+
+@dataclass
+class OAuthStateContext:
+    redirect_uri: str
+    frontend_url: str
 
 
 class AuthService:
@@ -51,33 +59,119 @@ class AuthService:
         if not self.settings.GOOGLE_CLIENT_ID or not self.settings.GOOGLE_CLIENT_SECRET:
             raise AppError("Google OAuth is not configured", status_code=503)
 
-    async def create_google_login_url(self, redis: Redis) -> tuple[str, str]:
+    async def create_google_login_url(
+        self,
+        redis: Redis,
+        *,
+        login_hint: str | None = None,
+        redirect_uri: str | None = None,
+        frontend_url: str | None = None,
+    ) -> tuple[str, str]:
         self._ensure_google_configured()
         state = secrets.token_urlsafe(32)
-        await redis.setex(f"{OAUTH_STATE_PREFIX}{state}", OAUTH_STATE_TTL, "1")
+        effective_redirect_uri = redirect_uri or self.settings.google_oauth_redirect_uri
+        effective_frontend_url = (frontend_url or self.settings.FRONTEND_URL).rstrip("/")
+        state_payload = json.dumps(
+            {
+                "redirect_uri": effective_redirect_uri,
+                "frontend_url": effective_frontend_url,
+            }
+        )
+        await redis.setex(f"{OAUTH_STATE_PREFIX}{state}", OAUTH_STATE_TTL, state_payload)
 
         params = {
             "client_id": self.settings.GOOGLE_CLIENT_ID,
-            "redirect_uri": self.settings.google_oauth_redirect_uri,
+            "redirect_uri": effective_redirect_uri,
             "response_type": "code",
             "scope": " ".join(self.settings.google_oauth_scopes),
             "access_type": "offline",
-            "include_granted_scopes": "true",
+            "include_granted_scopes": "false",
             "prompt": "consent",
             "state": state,
         }
+        if login_hint:
+            params["login_hint"] = login_hint
         url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
         return url, state
 
-    async def validate_oauth_state(self, redis: Redis, state: str) -> None:
+    async def revoke_google_token(self, token: str) -> None:
+        """Revoke a Google access or refresh token (best-effort)."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(GOOGLE_REVOKE_URL, params={"token": token})
+        except httpx.HTTPError:
+            pass
+
+    def _scope_includes_gmail_delete(self, scope: str | None) -> bool:
+        if not scope:
+            return False
+        full = self.settings.gmail_full_scope
+        modify = self.settings.gmail_modify_scope
+        return (
+            full in scope
+            or "mail.google.com" in scope
+            or modify in scope
+            or "gmail.modify" in scope
+        )
+
+    def _scope_includes_gmail_modify(self, scope: str | None) -> bool:
+        return self._scope_includes_gmail_delete(scope)
+
+    async def prepare_gmail_reconnect(self, db: AsyncSession, user: User) -> str:
+        """Revoke stale OAuth tokens so the next grant issues gmail.modify-only credentials."""
+        result = await db.execute(
+            select(Account).where(
+                Account.user_id == user.id,
+                Account.is_primary.is_(True),
+                Account.is_active.is_(True),
+            )
+        )
+        account = result.scalar_one_or_none()
+        if account is None:
+            raise AppError("No connected Gmail account found", status_code=404)
+
+        if account.access_token_encrypted:
+            access_token = decrypt_token(account.access_token_encrypted, settings=self.settings)
+            await self.revoke_google_token(access_token)
+
+        if account.refresh_token_encrypted:
+            refresh_token = decrypt_token(account.refresh_token_encrypted, settings=self.settings)
+            await self.revoke_google_token(refresh_token)
+            account.refresh_token_encrypted = None
+
+        account.token_expires_at = datetime(1970, 1, 1, tzinfo=UTC)
+        account.oauth_scopes = None
+        await db.commit()
+
+        return account.email
+
+    async def validate_oauth_state(self, redis: Redis, state: str) -> OAuthStateContext:
         key = f"{OAUTH_STATE_PREFIX}{state}"
-        exists = await redis.get(key)
-        if not exists:
+        raw = await redis.get(key)
+        if not raw:
             raise AppError("Invalid or expired OAuth state", status_code=400)
         await redis.delete(key)
 
-    async def exchange_google_code(self, code: str) -> tuple[GoogleTokenBundle, GoogleUserInfo]:
+        try:
+            payload = json.loads(raw)
+            return OAuthStateContext(
+                redirect_uri=str(payload["redirect_uri"]),
+                frontend_url=str(payload["frontend_url"]).rstrip("/"),
+            )
+        except (TypeError, ValueError, KeyError):
+            return OAuthStateContext(
+                redirect_uri=self.settings.google_oauth_redirect_uri,
+                frontend_url=self.settings.FRONTEND_URL.rstrip("/"),
+            )
+
+    async def exchange_google_code(
+        self,
+        code: str,
+        *,
+        redirect_uri: str | None = None,
+    ) -> tuple[GoogleTokenBundle, GoogleUserInfo]:
         self._ensure_google_configured()
+        effective_redirect_uri = redirect_uri or self.settings.google_oauth_redirect_uri
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             token_response = await client.post(
@@ -86,7 +180,7 @@ class AuthService:
                     "code": code,
                     "client_id": self.settings.GOOGLE_CLIENT_ID,
                     "client_secret": self.settings.GOOGLE_CLIENT_SECRET,
-                    "redirect_uri": self.settings.google_oauth_redirect_uri,
+                    "redirect_uri": effective_redirect_uri,
                     "grant_type": "authorization_code",
                 },
             )
@@ -117,6 +211,7 @@ class AuthService:
             refresh_token=token_data.get("refresh_token"),
             expires_in=token_data.get("expires_in"),
             id_token=token_data.get("id_token"),
+            scope=token_data.get("scope", ""),
         )
         user_info = GoogleUserInfo(
             google_id=str(google_id),
@@ -159,6 +254,12 @@ class AuthService:
 
         user.last_login_at = datetime.now(UTC)
 
+        if not self._scope_includes_gmail_delete(tokens.scope):
+            raise AppError(
+                "Full Gmail access was not granted. Sign in again and allow all Gmail permissions.",
+                status_code=400,
+            )
+
         expires_at = None
         if tokens.expires_in:
             expires_at = datetime.now(UTC) + timedelta(seconds=int(tokens.expires_in))
@@ -171,12 +272,24 @@ class AuthService:
         )
         account = account_result.scalar_one_or_none()
 
+        if not tokens.refresh_token:
+            raise AppError(
+                "Google did not issue a refresh token. Sign out, sign in again, and allow all permissions.",
+                status_code=400,
+            )
+
         encrypted_access = encrypt_token(tokens.access_token, settings=self.settings)
-        encrypted_refresh = (
-            encrypt_token(tokens.refresh_token, settings=self.settings)
-            if tokens.refresh_token
-            else None
-        )
+        encrypted_refresh = encrypt_token(tokens.refresh_token, settings=self.settings)
+
+        previous_refresh_plain: str | None = None
+        if account and account.refresh_token_encrypted:
+            try:
+                previous_refresh_plain = decrypt_token(
+                    account.refresh_token_encrypted,
+                    settings=self.settings,
+                )
+            except AppError:
+                previous_refresh_plain = None
 
         if account is None:
             account = Account(
@@ -187,6 +300,7 @@ class AuthService:
                 access_token_encrypted=encrypted_access,
                 refresh_token_encrypted=encrypted_refresh,
                 token_expires_at=expires_at,
+                oauth_scopes=tokens.scope or None,
                 is_primary=True,
                 is_active=True,
             )
@@ -194,13 +308,26 @@ class AuthService:
         else:
             account.display_name = user_info.full_name
             account.access_token_encrypted = encrypted_access
-            if encrypted_refresh:
-                account.refresh_token_encrypted = encrypted_refresh
+            account.refresh_token_encrypted = encrypted_refresh
+            account.oauth_scopes = tokens.scope or None
             account.token_expires_at = expires_at
             account.is_active = True
 
         await db.commit()
         await db.refresh(user)
+
+        # Only revoke when Google issued a different refresh token (compare plaintext).
+        # Encrypted blobs differ every encrypt() call even for the same token.
+        if (
+            previous_refresh_plain
+            and tokens.refresh_token
+            and previous_refresh_plain != tokens.refresh_token
+        ):
+            try:
+                await self.revoke_google_token(previous_refresh_plain)
+            except Exception:
+                pass
+
         return user
 
     async def get_or_create_demo_user(self, db: AsyncSession) -> User:

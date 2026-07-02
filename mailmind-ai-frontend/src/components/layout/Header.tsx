@@ -21,7 +21,7 @@ export function Header({ title, description }: HeaderProps) {
     .toUpperCase() ?? "MM";
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/60 bg-white/70 px-4 py-4 backdrop-blur-xl sm:px-8">
+    <header className="surface-chrome sticky top-0 z-40 border-b px-4 py-4 sm:px-8">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="heading-page truncate">{title}</h1>
@@ -34,7 +34,7 @@ export function Header({ title, description }: HeaderProps) {
             <p className="text-xs text-brand-muted">{user?.email}</p>
           </div>
           <Separator orientation="vertical" className="hidden h-8 sm:block" />
-          <Avatar className="h-10 w-10 border-2 border-white shadow-sm">
+          <Avatar className="h-10 w-10 border-2 border-border shadow-sm">
             <AvatarImage src={user?.avatar_url ?? undefined} alt={user?.full_name ?? "User"} />
             <AvatarFallback className="bg-brand-green-soft text-brand-text">{initials}</AvatarFallback>
           </Avatar>

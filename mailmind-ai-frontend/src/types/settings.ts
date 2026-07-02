@@ -1,4 +1,4 @@
-export type ThemePreference = "light" | "system";
+export type ThemePreference = "light" | "dark" | "system";
 
 export interface AccountSummary {
   id: string;
@@ -55,5 +55,6 @@ export const TIMEZONE_OPTIONS = [
 
 export const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
   { value: "system", label: "System" },
 ];

@@ -16,6 +16,7 @@ from app.schemas.dashboard import (
     DashboardResponse,
     DashboardStats,
 )
+from app.utils.gmail_categories import infer_category_from_gmail_labels
 
 CATEGORY_LABELS: dict[EmailCategory, str] = {
     EmailCategory.IMPORTANT: "Important",
@@ -100,26 +101,54 @@ class DashboardService:
         db: AsyncSession,
         user_id: UUID,
     ) -> list[CategoryStat]:
+        total_emails = await db.scalar(
+            select(func.count(Email.id)).where(Email.user_id == user_id)
+        ) or 0
+        if total_emails == 0:
+            return []
+
         result = await db.execute(
-            select(Category.category, func.count(Category.id))
-            .join(Email, Category.email_id == Email.id)
+            select(Email.labels, Email.is_important, Category.category)
+            .outerjoin(Category, Category.email_id == Email.id)
             .where(Email.user_id == user_id)
-            .group_by(Category.category)
         )
-        rows = result.all()
-        total = sum(count for _, count in rows) or 1
+
+        counts: dict[EmailCategory, int] = {category: 0 for category in EmailCategory}
+        uncategorized = 0
+
+        for labels_json, is_important, db_category in result.all():
+            resolved = db_category
+            if resolved is None:
+                resolved = infer_category_from_gmail_labels(
+                    labels_json,
+                    is_important=bool(is_important),
+                )
+            if resolved is None:
+                uncategorized += 1
+            else:
+                counts[resolved] += 1
 
         stats: list[CategoryStat] = []
-        counts_by_category = {category: count for category, count in rows}
-
         for category in EmailCategory:
-            count = counts_by_category.get(category, 0)
+            count = counts[category]
+            if count <= 0:
+                continue
             stats.append(
                 CategoryStat(
                     category=category.value,
                     label=CATEGORY_LABELS[category],
                     count=count,
-                    percentage=round((count / total) * 100, 1) if count else 0.0,
+                    percentage=round((count / total_emails) * 100, 1),
+                )
+            )
+
+        if uncategorized > 0:
+            stats.append(
+                CategoryStat(
+                    category="uncategorized",
+                    label="Uncategorized",
+                    count=uncategorized,
+                    percentage=round((uncategorized / total_emails) * 100, 1),
                 )
             )
 

@@ -30,7 +30,7 @@ const ACTIVITY_COLORS: Record<ActivityType, string> = {
   ai_categorize: "bg-brand-green-soft text-brand-green",
   ai_search: "bg-brand-green-soft text-brand-green",
   ai_assistant: "bg-brand-green-soft text-brand-green",
-  inbox_sync: "bg-accent text-brand-text",
+  inbox_sync: "bg-accent text-foreground",
 };
 
 interface RecentActivityProps {
@@ -61,10 +61,10 @@ export function RecentActivity({ items }: RecentActivityProps) {
                     <Icon className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-brand-text">{item.title}</p>
-                    <p className="truncate text-xs text-brand-muted">{item.description}</p>
+                    <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
+                    <p className="truncate text-xs text-muted-foreground">{item.description}</p>
                   </div>
-                  <time className="shrink-0 text-xs text-brand-muted">
+                  <time className="shrink-0 text-xs text-muted-foreground">
                     {formatDistanceToNow(item.timestamp)}
                   </time>
                 </li>

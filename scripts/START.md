@@ -27,7 +27,7 @@ cd ../mailmind-ai-backend
 ## Start (from repo root)
 
 ```powershell
-# Terminal 1 — backend (http://localhost:8020)
+# Terminal 1 — backend (http://localhost:8000)
 .\start-backend.ps1
 
 # Terminal 2 — frontend (http://localhost:5173)
@@ -42,9 +42,9 @@ Or start both in separate windows:
 
 ## Verify
 
-- Health: http://localhost:8020/api/v1/health
-- Ready: http://localhost:8020/api/v1/health/ready
-- OAuth config (dev): http://localhost:8020/api/v1/auth/google/oauth-config
+- Health: http://localhost:8000/api/v1/health
+- Ready: http://localhost:8000/api/v1/health/ready
+- OAuth config (dev): http://localhost:8000/api/v1/auth/google/oauth-config
 - App: http://localhost:5173
 
 ## Google OAuth
@@ -52,12 +52,12 @@ Or start both in separate windows:
 Set in `mailmind-ai-backend/.env`:
 
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` from Google Cloud Console
-- `BACKEND_PUBLIC_URL=http://localhost:8020` (must match the port uvicorn uses)
+- `BACKEND_PUBLIC_URL=http://localhost:8000` (must match `PORT` in `.env`)
 
 Authorized redirect URI in Google Cloud Console:
 
 ```
-http://localhost:8020/api/v1/auth/google/callback
+http://localhost:8000/api/v1/auth/google/callback
 ```
 
 Run `.\scripts\fix-google-oauth.ps1` to copy the URI and open the console.
@@ -77,4 +77,4 @@ Without these, the UI loads but login and AI features will fail.
 .\stop-backend.ps1
 ```
 
-Stops backend (port 8020) and frontend (port 5173).
+Stops backend (port 8000) and frontend (port 5173).

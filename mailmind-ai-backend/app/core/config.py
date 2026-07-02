@@ -44,6 +44,8 @@ class Settings(BaseSettings):
 
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    # Optional override when Google Console uses a different callback than BACKEND_PUBLIC_URL.
+    GOOGLE_OAUTH_REDIRECT_URI: str = ""
     FRONTEND_URL: str = "http://localhost:5173"
 
     OPENROUTER_API_KEY: str = ""
@@ -64,12 +66,24 @@ class Settings(BaseSettings):
             "openid",
             "email",
             "profile",
-            "https://www.googleapis.com/auth/gmail.readonly",
+            # Required for messages.batchDelete (permanent delete). gmail.modify alone
+            # explicitly excludes bypassing Trash / permanent deletion.
+            "https://mail.google.com/",
         ]
+
+    @property
+    def gmail_full_scope(self) -> str:
+        return "https://mail.google.com/"
+
+    @property
+    def gmail_modify_scope(self) -> str:
+        return "https://www.googleapis.com/auth/gmail.modify"
 
     @property
     def google_oauth_redirect_uri(self) -> str:
         """Single source of truth for Google OAuth redirect_uri (backend callback)."""
+        if self.GOOGLE_OAUTH_REDIRECT_URI.strip():
+            return self.GOOGLE_OAUTH_REDIRECT_URI.strip()
         base = self.BACKEND_PUBLIC_URL.rstrip("/")
         prefix = self.API_V1_PREFIX.rstrip("/")
         return f"{base}{prefix}/auth/google/callback"

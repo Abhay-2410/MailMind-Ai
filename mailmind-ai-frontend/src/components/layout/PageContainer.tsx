@@ -9,7 +9,7 @@ interface PageContainerProps {
 const sizeClasses = {
   default: "max-w-content",
   narrow: "max-w-2xl",
-  wide: "max-w-screen-2xl",
+  wide: "max-w-[1400px]",
 };
 
 export function PageContainer({ children, className, size = "default" }: PageContainerProps) {

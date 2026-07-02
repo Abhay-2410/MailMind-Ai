@@ -2,6 +2,7 @@
 from fastapi.responses import JSONResponse, RedirectResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
+from urllib.parse import urlparse
 
 from app.core.config import Settings, get_settings
 from app.core.cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
@@ -20,20 +21,71 @@ from app.schemas.auth import (
     UserPublic,
 )
 from app.services.auth_service import AuthService
+from app.utils.oauth_redirect import (
+    build_oauth_redirect_uri,
+    is_allowed_dev_origin,
+    list_dev_authorized_origins,
+    list_dev_redirect_uris,
+    normalize_origin,
+)
 
 router = APIRouter()
+
+
+def _resolve_oauth_context(
+    settings: Settings,
+    *,
+    origin: str | None,
+) -> tuple[str, str]:
+    """Return (redirect_uri, frontend_url) for the current sign-in request."""
+    if settings.is_production:
+        return settings.google_oauth_redirect_uri, settings.FRONTEND_URL.rstrip("/")
+
+    if origin and is_allowed_dev_origin(origin):
+        normalized = normalize_origin(origin)
+        return build_oauth_redirect_uri(normalized), normalized
+
+    frontend = settings.FRONTEND_URL.rstrip("/")
+    return build_oauth_redirect_uri(frontend), frontend
 
 
 @router.get("/google/login", response_model=GoogleLoginResponse)
 @apply_rate_limit("20/minute")
 async def google_login(
     request: Request,
+    origin: str | None = Query(default=None),
     redis: Redis = Depends(get_redis),
     auth_service: AuthService = Depends(get_auth_service),
+    settings: Settings = Depends(get_settings),
 ) -> GoogleLoginResponse:
     _ = request
-    url, state = await auth_service.create_google_login_url(redis)
+    redirect_uri, frontend_url = _resolve_oauth_context(settings, origin=origin)
+    url, state = await auth_service.create_google_login_url(
+        redis,
+        redirect_uri=redirect_uri,
+        frontend_url=frontend_url,
+    )
     return GoogleLoginResponse(authorization_url=url, state=state)
+
+
+@router.get("/google/login/redirect")
+@apply_rate_limit("20/minute")
+async def google_login_redirect(
+    request: Request,
+    origin: str | None = Query(default=None),
+    redis: Redis = Depends(get_redis),
+    auth_service: AuthService = Depends(get_auth_service),
+    settings: Settings = Depends(get_settings),
+):
+    """Browser navigation entrypoint — avoids fetch/CORS issues during OAuth."""
+    _ = request
+    redirect_uri, frontend_url = _resolve_oauth_context(settings, origin=origin)
+    url, _state = await auth_service.create_google_login_url(
+        redis,
+        redirect_uri=redirect_uri,
+        frontend_url=frontend_url,
+    )
+    return RedirectResponse(url=url, status_code=302)
 
 
 @router.get("/google/oauth-config", response_model=GoogleOAuthConfigResponse)
@@ -52,6 +104,18 @@ async def google_oauth_config(
         backend_public_url=settings.BACKEND_PUBLIC_URL,
         frontend_callback_url=f"{settings.FRONTEND_URL.rstrip('/')}/auth/callback",
         google_configured=bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET),
+        required_redirect_uris=list_dev_redirect_uris(
+            frontend_port=urlparse(settings.FRONTEND_URL).port or 5173,
+            backend_port=settings.PORT,
+        ),
+        authorized_origins=list_dev_authorized_origins(
+            frontend_port=urlparse(settings.FRONTEND_URL).port or 5173,
+        ),
+        google_console_url=(
+            f"https://console.cloud.google.com/apis/credentials/oauthclient/{settings.GOOGLE_CLIENT_ID}"
+            if settings.GOOGLE_CLIENT_ID
+            else "https://console.cloud.google.com/apis/credentials"
+        ),
     )
 
 
@@ -68,17 +132,21 @@ async def google_callback(
 ):
     _ = request
     try:
-        await auth_service.validate_oauth_state(redis, state)
-        google_tokens, google_user = await auth_service.exchange_google_code(code)
+        oauth_context = await auth_service.validate_oauth_state(redis, state)
+        google_tokens, google_user = await auth_service.exchange_google_code(
+            code,
+            redirect_uri=oauth_context.redirect_uri,
+        )
         user = await auth_service.upsert_user_from_google(db, google_tokens, google_user)
         token_response, refresh_token = await auth_service.create_session(redis, user)
         exchange_code = await auth_service.store_exchange_code(redis, token_response, refresh_token)
-        redirect_url = f"{settings.FRONTEND_URL}/auth/callback?code={exchange_code}"
+        redirect_url = f"{oauth_context.frontend_url}/auth/callback?code={exchange_code}"
         response = RedirectResponse(url=redirect_url, status_code=302)
         set_refresh_cookie(response, refresh_token, secure=settings.is_production)
         return response
     except AppError as exc:
-        error_url = f"{settings.FRONTEND_URL}/auth/callback?error={exc.message}"
+        frontend_url = settings.FRONTEND_URL.rstrip("/")
+        error_url = f"{frontend_url}/auth/callback?error={exc.message}"
         return RedirectResponse(url=error_url, status_code=302)
 
 

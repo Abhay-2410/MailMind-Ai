@@ -8,11 +8,12 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useEmail } from "@/hooks/useEmails";
+import { ApiError } from "@/lib/api";
 import { ROUTES } from "@/lib/constants";
 
 export function EmailPage() {
   const { id } = useParams<{ id: string }>();
-  const { data: email, isLoading, isError, refetch } = useEmail(id);
+  const { data: email, isLoading, isError, error, refetch } = useEmail(id);
 
   if (!id) {
     return (
@@ -34,11 +35,20 @@ export function EmailPage() {
   }
 
   if (isError || !email) {
+    const isGmailAuth =
+      error instanceof ApiError &&
+      (error.status === 401 || /session expired|sign in|gmail/i.test(error.message));
     return (
       <EmptyState
         icon={Mail}
         title="Unable to load email"
-        description="This email may have been removed or you may not have access."
+        description={
+          isGmailAuth
+            ? "Your Gmail connection expired. Sign out and sign in with Google again, then return to this email."
+            : error instanceof Error
+              ? error.message
+              : "This email may have been removed or you may not have access."
+        }
         action={
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => void refetch()}>
