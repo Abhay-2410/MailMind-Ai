@@ -35,8 +35,8 @@ class UserSettings(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
 
-    ai_provider: Mapped[str] = mapped_column(String(50), default="openrouter", nullable=False)
-    ai_model: Mapped[str] = mapped_column(String(100), default="deepseek/deepseek-chat", nullable=False)
+    ai_provider: Mapped[str] = mapped_column(String(50), default="groq", nullable=False)
+    ai_model: Mapped[str] = mapped_column(String(100), default="llama-3.1-8b-instant", nullable=False)
 
     theme: Mapped[ThemePreference] = mapped_column(
         Enum(

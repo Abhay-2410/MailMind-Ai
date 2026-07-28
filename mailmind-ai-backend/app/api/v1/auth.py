@@ -2,7 +2,7 @@
 from fastapi.responses import JSONResponse, RedirectResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from app.core.config import Settings, get_settings
 from app.core.cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
@@ -22,14 +22,20 @@ from app.schemas.auth import (
 )
 from app.services.auth_service import AuthService
 from app.utils.oauth_redirect import (
-    build_oauth_redirect_uri,
     is_allowed_dev_origin,
+    is_private_lan_origin,
     list_dev_authorized_origins,
     list_dev_redirect_uris,
     normalize_origin,
+    resolve_dev_oauth_redirect_uri,
 )
 
 router = APIRouter()
+
+
+def _allowed_frontend_origins(settings: Settings) -> set[str]:
+    allowed = {settings.FRONTEND_URL.rstrip("/"), *settings.cors_origins}
+    return {o.rstrip("/") for o in allowed if o}
 
 
 def _resolve_oauth_context(
@@ -37,16 +43,42 @@ def _resolve_oauth_context(
     *,
     origin: str | None,
 ) -> tuple[str, str]:
-    """Return (redirect_uri, frontend_url) for the current sign-in request."""
+    """Return (redirect_uri, frontend_url) for the current sign-in request.
+
+    Production / public SPA (Vercel): stable BACKEND_PUBLIC_URL callback +
+    FRONTEND_URL (or a CORS-listed origin).
+
+    Local LAN phones: callback must hit the same private host as the SPA
+    (Vite proxies /api), because localhost on the phone is not this PC.
+    """
+    default_frontend = settings.FRONTEND_URL.rstrip("/")
+
     if settings.is_production:
-        return settings.google_oauth_redirect_uri, settings.FRONTEND_URL.rstrip("/")
+        redirect_uri = settings.google_oauth_redirect_uri
+        if origin:
+            try:
+                normalized = normalize_origin(origin)
+            except ValueError:
+                return redirect_uri, default_frontend
+            if normalized in _allowed_frontend_origins(settings):
+                return redirect_uri, normalized
+        return redirect_uri, default_frontend
 
-    if origin and is_allowed_dev_origin(origin):
-        normalized = normalize_origin(origin)
-        return build_oauth_redirect_uri(normalized), normalized
+    redirect_uri = resolve_dev_oauth_redirect_uri(
+        origin=origin,
+        backend_redirect_uri=settings.google_oauth_redirect_uri,
+        api_prefix=settings.API_V1_PREFIX,
+    )
 
-    frontend = settings.FRONTEND_URL.rstrip("/")
-    return build_oauth_redirect_uri(frontend), frontend
+    if origin:
+        try:
+            normalized = normalize_origin(origin)
+        except ValueError:
+            return redirect_uri, default_frontend
+        if is_allowed_dev_origin(origin) or normalized in _allowed_frontend_origins(settings):
+            return redirect_uri, normalized
+
+    return redirect_uri, default_frontend
 
 
 @router.get("/google/login", response_model=GoogleLoginResponse)
@@ -92,6 +124,7 @@ async def google_login_redirect(
 @apply_rate_limit("60/minute")
 async def google_oauth_config(
     request: Request,
+    origin: str | None = Query(default=None),
     settings: Settings = Depends(get_settings),
 ) -> GoogleOAuthConfigResponse:
     """Development helper: shows the exact redirect URI registered with Google."""
@@ -99,24 +132,76 @@ async def google_oauth_config(
     if settings.is_production:
         raise AppError("Not found", status_code=404)
 
+    frontend_port = urlparse(settings.FRONTEND_URL).port or 5173
+    required = list_dev_redirect_uris(
+        frontend_port=frontend_port,
+        backend_port=settings.PORT,
+    )
+    # Always include the live configured callback (Vercel / tunnel / custom).
+    live_callback = settings.google_oauth_redirect_uri
+    if live_callback not in required:
+        required.insert(0, live_callback)
+
+    authorized = list_dev_authorized_origins(frontend_port=frontend_port)
+    live_frontend = settings.FRONTEND_URL.rstrip("/")
+    if live_frontend not in authorized:
+        authorized.insert(0, live_frontend)
+    for cors_origin in settings.cors_origins:
+        if cors_origin and cors_origin not in authorized:
+            authorized.append(cors_origin)
+
+    candidate = origin or request.headers.get("origin")
+    if candidate:
+        try:
+            normalized = normalize_origin(candidate)
+            if normalized not in authorized:
+                authorized.append(normalized)
+            if is_allowed_dev_origin(candidate) and is_private_lan_origin(normalized):
+                lan_callback = (
+                    f"{normalized}{settings.API_V1_PREFIX.rstrip('/')}/auth/google/callback"
+                )
+                if lan_callback not in required:
+                    required.append(lan_callback)
+        except ValueError:
+            pass
+
     return GoogleOAuthConfigResponse(
         redirect_uri=settings.google_oauth_redirect_uri,
         backend_public_url=settings.BACKEND_PUBLIC_URL,
         frontend_callback_url=f"{settings.FRONTEND_URL.rstrip('/')}/auth/callback",
         google_configured=bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET),
-        required_redirect_uris=list_dev_redirect_uris(
-            frontend_port=urlparse(settings.FRONTEND_URL).port or 5173,
-            backend_port=settings.PORT,
-        ),
-        authorized_origins=list_dev_authorized_origins(
-            frontend_port=urlparse(settings.FRONTEND_URL).port or 5173,
-        ),
+        required_redirect_uris=required,
+        authorized_origins=authorized,
         google_console_url=(
             f"https://console.cloud.google.com/apis/credentials/oauthclient/{settings.GOOGLE_CLIENT_ID}"
             if settings.GOOGLE_CLIENT_ID
             else "https://console.cloud.google.com/apis/credentials"
         ),
     )
+
+
+@router.post("/google/reconnect", response_model=GoogleLoginResponse)
+@apply_rate_limit("10/minute")
+async def google_reconnect(
+    request: Request,
+    origin: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+    auth_service: AuthService = Depends(get_auth_service),
+    settings: Settings = Depends(get_settings),
+    current_user: User = Depends(get_current_active_user),
+) -> GoogleLoginResponse:
+    """Revoke stale Gmail tokens and return a fresh Google consent URL."""
+    _ = request
+    account_email = await auth_service.prepare_gmail_reconnect(db, current_user)
+    redirect_uri, frontend_url = _resolve_oauth_context(settings, origin=origin)
+    url, state = await auth_service.create_google_login_url(
+        redis,
+        login_hint=account_email,
+        redirect_uri=redirect_uri,
+        frontend_url=frontend_url,
+    )
+    return GoogleLoginResponse(authorization_url=url, state=state)
 
 
 @router.get("/google/callback")
@@ -131,8 +216,10 @@ async def google_callback(
     settings: Settings = Depends(get_settings),
 ):
     _ = request
+    frontend_url = settings.FRONTEND_URL.rstrip("/")
     try:
         oauth_context = await auth_service.validate_oauth_state(redis, state)
+        frontend_url = oauth_context.frontend_url.rstrip("/")
         google_tokens, google_user = await auth_service.exchange_google_code(
             code,
             redirect_uri=oauth_context.redirect_uri,
@@ -140,13 +227,12 @@ async def google_callback(
         user = await auth_service.upsert_user_from_google(db, google_tokens, google_user)
         token_response, refresh_token = await auth_service.create_session(redis, user)
         exchange_code = await auth_service.store_exchange_code(redis, token_response, refresh_token)
-        redirect_url = f"{oauth_context.frontend_url}/auth/callback?code={exchange_code}"
+        redirect_url = f"{frontend_url}/auth/callback?code={exchange_code}"
         response = RedirectResponse(url=redirect_url, status_code=302)
         set_refresh_cookie(response, refresh_token, secure=settings.is_production)
         return response
     except AppError as exc:
-        frontend_url = settings.FRONTEND_URL.rstrip("/")
-        error_url = f"{frontend_url}/auth/callback?error={exc.message}"
+        error_url = f"{frontend_url}/auth/callback?error={quote(exc.message, safe='')}"
         return RedirectResponse(url=error_url, status_code=302)
 
 
@@ -194,11 +280,12 @@ async def logout(
     body: RefreshTokenRequest | None = None,
     redis: Redis = Depends(get_redis),
     auth_service: AuthService = Depends(get_auth_service),
+    settings: Settings = Depends(get_settings),
     _current_user: User = Depends(get_current_active_user),
 ) -> LogoutResponse:
     refresh_token = (body.refresh_token if body else None) or request.cookies.get(REFRESH_COOKIE_NAME)
     await auth_service.logout(redis, refresh_token)
-    clear_refresh_cookie(response)
+    clear_refresh_cookie(response, secure=settings.is_production)
     return LogoutResponse()
 
 
@@ -244,9 +331,9 @@ async def dev_login(
     auth_service: AuthService = Depends(get_auth_service),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
-    """Sign in without Google OAuth (development only)."""
+    """Sign in without Google OAuth (development only — DEBUG must be enabled)."""
     _ = request
-    if settings.is_production:
+    if settings.is_production or not settings.DEBUG:
         raise AppError("Not found", status_code=404)
 
     user = await auth_service.get_or_create_demo_user(db)

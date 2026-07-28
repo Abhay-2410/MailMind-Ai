@@ -1,4 +1,4 @@
-"""Full-inbox importance triage agent (Claude Sonnet 4.6 via OpenRouter)."""
+"""Full-inbox importance triage agent (Groq by default, OpenRouter Claude fallback)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ from app.utils.gmail_pagination_helpers import TriageCandidate
 
 logger = logging.getLogger(__name__)
 
-TRIAGE_AGENT_MODEL = "anthropic/claude-sonnet-4-6"
+# Groq-hosted default; OpenRouter Claude kept as fallback when Groq is unavailable.
+GROQ_TRIAGE_MODEL = "llama-3.3-70b-versatile"
+OPENROUTER_TRIAGE_MODEL = "anthropic/claude-sonnet-4-6"
 CONFIDENCE_THRESHOLD = 0.9
 DEFAULT_BATCH_SIZE = 15
 
@@ -70,7 +72,13 @@ class TriageDecision:
 class InboxTriageAgent:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self.provider = get_provider("openrouter", self.settings)
+        if self.settings.GROQ_API_KEY:
+            self.provider_name = "groq"
+            self.model_id = GROQ_TRIAGE_MODEL
+        else:
+            self.provider_name = "openrouter"
+            self.model_id = OPENROUTER_TRIAGE_MODEL
+        self.provider = get_provider(self.provider_name, self.settings)
 
     def _append_log(self, entry: dict[str, Any]) -> None:
         entry["logged_at"] = datetime.now(UTC).isoformat()
@@ -183,7 +191,7 @@ class InboxTriageAgent:
 
         try:
             result = await self.provider.complete_json(
-                model=TRIAGE_AGENT_MODEL,
+                model=self.model_id,
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 temperature=0.1,
@@ -245,7 +253,7 @@ class InboxTriageAgent:
                     "kept_by_safety": decision.kept_by_safety,
                     "dry_run": dry_run,
                     "source": "agent",
-                    "model": TRIAGE_AGENT_MODEL,
+                    "model": self.model_id,
                 }
             )
             decisions.append(decision)

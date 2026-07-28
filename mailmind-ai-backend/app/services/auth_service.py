@@ -103,6 +103,13 @@ class AuthService:
             pass
 
     def _scope_includes_gmail_delete(self, scope: str | None) -> bool:
+        """Permanent delete requires full Gmail scope (mail.google.com)."""
+        if not scope:
+            return False
+        full = self.settings.gmail_full_scope
+        return full in scope or "mail.google.com" in scope
+
+    def _scope_includes_gmail_modify(self, scope: str | None) -> bool:
         if not scope:
             return False
         full = self.settings.gmail_full_scope
@@ -114,11 +121,8 @@ class AuthService:
             or "gmail.modify" in scope
         )
 
-    def _scope_includes_gmail_modify(self, scope: str | None) -> bool:
-        return self._scope_includes_gmail_delete(scope)
-
     async def prepare_gmail_reconnect(self, db: AsyncSession, user: User) -> str:
-        """Revoke stale OAuth tokens so the next grant issues gmail.modify-only credentials."""
+        """Revoke stale OAuth tokens so the next grant can issue fresh Gmail scopes."""
         result = await db.execute(
             select(Account).where(
                 Account.user_id == user.id,

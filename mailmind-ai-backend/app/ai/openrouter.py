@@ -205,4 +205,8 @@ def get_provider(provider_name: str, settings: Settings | None = None) -> AIProv
     settings = settings or get_settings()
     if provider_name == "openrouter":
         return OpenRouterProvider(settings)
+    if provider_name == "groq":
+        from app.ai.groq import GroqProvider
+
+        return GroqProvider(settings)
     raise AppError(f"Unsupported AI provider: {provider_name}", status_code=400)

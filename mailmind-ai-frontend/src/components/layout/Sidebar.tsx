@@ -62,7 +62,7 @@ export function Sidebar() {
 
       <div className="surface-panel mt-auto p-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full brand-gradient text-sm font-bold text-white shadow-soft">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full brand-gradient text-sm font-bold text-primary-foreground shadow-soft">
             {(user?.full_name?.[0] ?? user?.email?.[0] ?? "M").toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">

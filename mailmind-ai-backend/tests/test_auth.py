@@ -21,7 +21,7 @@ async def test_google_login_returns_authorization_url(client: AsyncClient) -> No
 
     parsed = urlparse(body["authorization_url"])
     query = parse_qs(parsed.query)
-    assert query["redirect_uri"] == ["http://localhost:5173/api/v1/auth/google/callback"]
+    assert query["redirect_uri"] == ["http://localhost:8000/api/v1/auth/google/callback"]
 
 
 @pytest.mark.asyncio
@@ -33,12 +33,13 @@ async def test_google_oauth_config_endpoint(client: AsyncClient) -> None:
     assert body["redirect_uri"] == settings.google_oauth_redirect_uri
     assert body["backend_public_url"] == settings.BACKEND_PUBLIC_URL
     assert body["google_configured"] is True
-    assert len(body["required_redirect_uris"]) >= 2
+    assert body["required_redirect_uris"][0] == settings.google_oauth_redirect_uri
+    assert "http://localhost:8000/api/v1/auth/google/callback" in body["required_redirect_uris"]
     assert len(body["authorized_origins"]) >= 2
 
 
 @pytest.mark.asyncio
-async def test_google_login_uses_origin_redirect_uri(client: AsyncClient) -> None:
+async def test_google_login_keeps_backend_redirect_uri_with_origin(client: AsyncClient) -> None:
     response = await client.get(
         "/api/v1/auth/google/login",
         params={"origin": "http://localhost:5173"},
@@ -46,7 +47,20 @@ async def test_google_login_uses_origin_redirect_uri(client: AsyncClient) -> Non
     assert response.status_code == 200
     parsed = urlparse(response.json()["authorization_url"])
     query = parse_qs(parsed.query)
-    assert query["redirect_uri"] == ["http://localhost:5173/api/v1/auth/google/callback"]
+    assert query["redirect_uri"] == ["http://localhost:8000/api/v1/auth/google/callback"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_uses_lan_proxied_redirect_uri(client: AsyncClient) -> None:
+    """Phones cannot reach the PC via localhost — callback must use the LAN SPA host."""
+    response = await client.get(
+        "/api/v1/auth/google/login",
+        params={"origin": "http://172.20.10.2:5173"},
+    )
+    assert response.status_code == 200
+    parsed = urlparse(response.json()["authorization_url"])
+    query = parse_qs(parsed.query)
+    assert query["redirect_uri"] == ["http://172.20.10.2:5173/api/v1/auth/google/callback"]
 
 
 @pytest.mark.asyncio

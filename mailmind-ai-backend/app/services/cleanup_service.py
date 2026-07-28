@@ -153,7 +153,7 @@ class CleanupService:
         payload: CleanupAnalyzeRequest,
     ) -> CleanupAnalyzeProgressResponse:
         user_id = user.id
-        job = cleanup_job_store.create(payload.category)
+        job = cleanup_job_store.create(user.id, payload.category)
 
         async def run() -> None:
             try:
@@ -177,9 +177,13 @@ class CleanupService:
             total=0,
         )
 
-    async def get_analyze_progress(self, job_id: str) -> CleanupAnalyzeProgressResponse:
-        job = cleanup_job_store.get(job_id)
-        if not job:
+    async def get_analyze_progress(
+        self,
+        job_id: str,
+        user: User,
+    ) -> CleanupAnalyzeProgressResponse:
+        job = await cleanup_job_store.get_async(job_id)
+        if not job or job.user_id != user.id:
             raise AppError("Analyze job not found", status_code=404)
 
         async with job.lock:
@@ -291,9 +295,7 @@ class CleanupService:
         access_token = await self.gmail.ensure_access_token_for_delete(account, db)
 
         if payload.permanent:
-            if account.oauth_scopes and not self.gmail.scope_includes_gmail_delete(
-                account.oauth_scopes
-            ):
+            if not self.gmail.scope_includes_gmail_delete(account.oauth_scopes):
                 raise AppError(
                     "Full Gmail access is required for permanent delete. "
                     "Sign out, sign in with Google again, and allow all Gmail permissions.",
@@ -307,8 +309,8 @@ class CleanupService:
                 access_token, payload.message_ids
             )
 
-        if deleted and payload.permanent:
-            await self._purge_local(db, user.id, payload.message_ids)
+        if deleted:
+            await self._purge_local(db, user.id, [mid for mid in payload.message_ids if mid not in failed])
 
         return CleanupDeleteResponse(
             deleted=deleted,
@@ -483,9 +485,13 @@ class CleanupService:
             phase="pending",
         )
 
-    async def get_triage_analyze_progress(self, job_id: str) -> TriageAnalyzeProgressResponse:
-        job = triage_job_store.get(job_id)
-        if not job:
+    async def get_triage_analyze_progress(
+        self,
+        job_id: str,
+        user: User,
+    ) -> TriageAnalyzeProgressResponse:
+        job = await triage_job_store.get_async(job_id)
+        if not job or job.user_id != user.id:
             raise AppError("Triage analyze job not found", status_code=404)
 
         async with job.lock:
@@ -538,10 +544,13 @@ class CleanupService:
         account = await self.email_service.get_primary_account(db, user.id)
         access_token = await self.gmail.ensure_access_token_for_delete(account, db)
         deleted, failed = await self.helpers.trash_messages(access_token, delete_ids)
+        kept = [mid for mid in delete_ids if mid not in failed]
+        if kept:
+            await self._purge_local(db, user.id, kept)
 
         return TriageDeleteResponse(
             deleted=deleted,
             failed=failed,
             trashed=True,
-            message_ids=[mid for mid in delete_ids if mid not in failed],
+            message_ids=kept,
         )

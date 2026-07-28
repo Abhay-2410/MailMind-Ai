@@ -94,13 +94,13 @@
 }
 
 .smart-cleanup-badge--high {
-  background: linear-gradient(90deg, #93c5fd, #4f46e5);
-  color: #ffffff;
+  background: linear-gradient(90deg, #2a3836, #1e2928);
+  color: #e6e2cf;
 }
 
 .smart-cleanup-badge--medium {
-  background: #eef2f6;
-  color: #667085;
+  background: #ebe7d6;
+  color: #4a4a4a;
 }
 
 .smart-cleanup-progress {
@@ -113,7 +113,7 @@
 .smart-cleanup-progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #3b82f6, #4f46e5, #312e81);
+  background: linear-gradient(90deg, #2a3836, #1e2928, #15201f);
   transition: width 0.25s ease;
 }
 

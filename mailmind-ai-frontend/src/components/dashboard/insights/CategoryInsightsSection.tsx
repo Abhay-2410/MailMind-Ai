@@ -20,22 +20,22 @@ import type { ActivityItem, CategoryStat, DashboardStats } from "@/types/dashboa
 const CATEGORY_BAR_COLORS: Record<string, string> = {
   important: "bg-brand-green",
   work: "bg-brand-green-light",
-  personal: "bg-violet-400",
-  finance: "bg-indigo-500",
-  promotions: "bg-slate-400",
-  social: "bg-blue-400",
-  updates: "bg-amber-400",
-  uncategorized: "bg-gray-300",
+  personal: "bg-stone-500",
+  finance: "bg-emerald-700/80",
+  promotions: "bg-stone-400",
+  social: "bg-stone-600",
+  updates: "bg-amber-700/70",
+  uncategorized: "bg-stone-300",
 };
 
 const CATEGORY_TILE_GRADIENTS: Record<string, string> = {
-  important: "from-blue-100 to-indigo-50 border-blue-200 dark:from-blue-950/50 dark:to-indigo-900/20 dark:border-blue-800/40",
-  work: "from-indigo-100 to-blue-50 border-indigo-200 dark:from-indigo-950/50 dark:to-blue-900/20 dark:border-indigo-800/40",
-  personal: "from-violet-100 to-purple-50 border-violet-200 dark:from-violet-950/50 dark:to-violet-900/20 dark:border-violet-800/40",
-  finance: "from-cyan-100 to-teal-50 border-cyan-200 dark:from-cyan-950/50 dark:to-cyan-900/20 dark:border-cyan-800/40",
-  promotions: "from-slate-100 to-gray-50 border-slate-200 dark:from-slate-900/60 dark:to-slate-800/30 dark:border-slate-700/40",
-  social: "from-indigo-100 to-violet-50 border-indigo-200 dark:from-indigo-950/50 dark:to-indigo-900/20 dark:border-indigo-800/40",
-  updates: "from-amber-100 to-yellow-50 border-amber-200 dark:from-amber-950/50 dark:to-amber-900/20 dark:border-amber-800/40",
+  important: "from-[hsl(48_35%_93%)] to-[hsl(48_28%_88%)] border-border",
+  work: "from-[hsl(48_30%_92%)] to-[hsl(45_22%_88%)] border-border",
+  personal: "from-[hsl(40_25%_92%)] to-[hsl(48_28%_90%)] border-border",
+  finance: "from-[hsl(155_18%_90%)] to-[hsl(48_28%_90%)] border-border",
+  promotions: "from-[hsl(40_15%_92%)] to-[hsl(48_20%_90%)] border-border",
+  social: "from-[hsl(48_28%_91%)] to-[hsl(40_18%_88%)] border-border",
+  updates: "from-[hsl(42_30%_91%)] to-[hsl(48_28%_90%)] border-border",
 };
 
 interface CategoryInsightsSectionProps {

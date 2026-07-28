@@ -124,7 +124,7 @@ export function ChatPanel({ initialMessage }: { initialMessage?: string }) {
               </div>
               <h3 className="text-lg font-semibold text-brand-text">Ask your inbox anything</h3>
               <p className="mt-2 max-w-md text-sm text-brand-muted">
-                The assistant uses your 20 most recent synced emails as context.
+                The assistant finds relevant synced emails for your question, plus a few recent ones.
               </p>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
                 {ASSISTANT_SUGGESTIONS.map((suggestion) => (

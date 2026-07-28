@@ -42,7 +42,9 @@ export function AIModelSettings({ settings }: AIModelSettingsProps) {
           <Bot className="h-5 w-5 text-brand-green" />
           AI model
         </CardTitle>
-        <CardDescription>Choose the model used for summaries, replies, and assistant</CardDescription>
+        <CardDescription>
+          Groq powers the inbox assistant. Choose a Groq model here for summaries and replies too.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (

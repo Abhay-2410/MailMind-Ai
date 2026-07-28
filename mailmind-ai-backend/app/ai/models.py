@@ -3,6 +3,7 @@ from enum import Enum
 
 
 class AIProviderName(str, Enum):
+    GROQ = "groq"
     OPENROUTER = "openrouter"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
@@ -20,11 +21,23 @@ class AIModelDefinition:
 
 DEFAULT_MODELS: list[AIModelDefinition] = [
     AIModelDefinition(
+        id="llama-3.1-8b-instant",
+        name="Llama 3.1 8B Instant (Groq)",
+        provider=AIProviderName.GROQ,
+        description="Fastest Groq model — default for inbox assistant",
+        is_default=True,
+    ),
+    AIModelDefinition(
+        id="llama-3.3-70b-versatile",
+        name="Llama 3.3 70B (Groq)",
+        provider=AIProviderName.GROQ,
+        description="Higher-quality Groq model (slower than Instant)",
+    ),
+    AIModelDefinition(
         id="deepseek/deepseek-chat",
         name="DeepSeek Chat",
         provider=AIProviderName.OPENROUTER,
-        description="Fast, cost-effective general purpose model",
-        is_default=True,
+        description="Fast, cost-effective general purpose model via OpenRouter",
     ),
     AIModelDefinition(
         id="qwen/qwen-2.5-72b-instruct",
@@ -36,13 +49,13 @@ DEFAULT_MODELS: list[AIModelDefinition] = [
         id="openai/gpt-4o-mini",
         name="GPT-4o Mini",
         provider=AIProviderName.OPENROUTER,
-        description="OpenAI model via OpenRouter (future direct support)",
+        description="OpenAI model via OpenRouter",
     ),
     AIModelDefinition(
         id="anthropic/claude-3.5-sonnet",
         name="Claude 3.5 Sonnet",
         provider=AIProviderName.OPENROUTER,
-        description="Anthropic model via OpenRouter (future direct support)",
+        description="Anthropic model via OpenRouter",
     ),
 ]
 

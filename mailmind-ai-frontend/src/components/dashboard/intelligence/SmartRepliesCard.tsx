@@ -12,9 +12,9 @@ interface SmartRepliesCardProps {
 
 export function SmartRepliesCard({ data }: SmartRepliesCardProps) {
   return (
-    <PremiumCard className="flex h-full flex-col">
-      <div className="mb-4 flex items-start justify-between">
-        <div className="brand-icon-surface flex h-10 w-10 items-center justify-center rounded-xl">
+    <PremiumCard className="flex h-full min-h-[320px] w-full flex-col">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="brand-icon-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-xl">
           <MessageSquareReply className="h-5 w-5" />
         </div>
         <span className="text-xs font-semibold text-muted-foreground">03</span>
@@ -24,22 +24,24 @@ export function SmartRepliesCard({ data }: SmartRepliesCardProps) {
       <div className="mt-5">
         <MetricPill label="generated" value={formatNumber(data.generatedCount)} />
       </div>
-      {data.drafts.length > 0 ? (
-        <ul className="mt-4 space-y-3">
-          {data.drafts.map((draft) => (
-            <li key={draft.title}>
-              <p className="truncate text-sm font-semibold text-brand-text">{draft.title}</p>
-              <p className="truncate text-xs text-brand-muted">{draft.description}</p>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-4 text-sm text-brand-muted">Generate a reply from any email.</p>
-      )}
-      <Button asChild className="mt-auto w-full gap-2 rounded-xl">
+      <div className="mt-4 flex-1">
+        {data.drafts.length > 0 ? (
+          <ul className="space-y-3">
+            {data.drafts.map((draft) => (
+              <li key={draft.title}>
+                <p className="truncate text-sm font-semibold text-brand-text">{draft.title}</p>
+                <p className="truncate text-xs text-brand-muted">{draft.description}</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm leading-relaxed text-brand-muted">Generate a reply from any email.</p>
+        )}
+      </div>
+      <Button asChild className="mt-6 w-full shrink-0">
         <Link to={data.href} className="inline-flex w-full items-center justify-center gap-2">
           <span>Generate reply</span>
-          <ArrowRight className="h-4 w-4 shrink-0" />
+          <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
         </Link>
       </Button>
     </PremiumCard>
@@ -52,7 +54,7 @@ interface FollowUpsCardProps {
 
 export function FollowUpsCard({ data }: FollowUpsCardProps) {
   return (
-    <PremiumCard className="flex h-full flex-col">
+    <PremiumCard className="flex h-full min-h-[320px] w-full flex-col">
       <div className="mb-4 flex items-start justify-between">
         <div className="brand-icon-surface flex h-10 w-10 items-center justify-center rounded-xl">
           <Clock className="h-5 w-5" />
@@ -64,18 +66,20 @@ export function FollowUpsCard({ data }: FollowUpsCardProps) {
       <div className="mt-5">
         <MetricPill label="pending" value={formatNumber(data.pendingCount)} />
       </div>
-      {data.items.length > 0 ? (
-        <ul className="mt-4 space-y-3">
-          {data.items.map((item) => (
-            <li key={item.title}>
-              <p className="truncate text-sm font-semibold text-brand-text">{item.title}</p>
-              <p className="truncate text-xs text-brand-muted">{item.description}</p>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-4 text-sm text-brand-muted">No upcoming actions detected yet.</p>
-      )}
+      <div className="mt-4 flex-1">
+        {data.items.length > 0 ? (
+          <ul className="space-y-3">
+            {data.items.map((item) => (
+              <li key={item.title}>
+                <p className="truncate text-sm font-semibold text-brand-text">{item.title}</p>
+                <p className="truncate text-xs text-brand-muted">{item.description}</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm leading-relaxed text-brand-muted">No upcoming actions detected yet.</p>
+        )}
+      </div>
     </PremiumCard>
   );
 }

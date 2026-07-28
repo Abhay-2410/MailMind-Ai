@@ -7,12 +7,12 @@ import type { CategoryStat } from "@/types/dashboard";
 const CATEGORY_COLORS: Record<string, string> = {
   important: "bg-brand-green",
   work: "bg-brand-green-light",
-  personal: "bg-emerald-400",
-  finance: "bg-teal-500",
-  promotions: "bg-slate-400",
-  social: "bg-violet-400",
-  updates: "bg-amber-400",
-  uncategorized: "bg-gray-300",
+  personal: "bg-stone-500",
+  finance: "bg-emerald-700/80",
+  promotions: "bg-stone-400",
+  social: "bg-stone-600",
+  updates: "bg-amber-700/70",
+  uncategorized: "bg-stone-300",
 };
 
 interface CategoryChartProps {

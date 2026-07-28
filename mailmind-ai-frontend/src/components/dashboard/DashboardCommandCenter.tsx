@@ -10,8 +10,8 @@ export function DashboardCommandCenter() {
 
   return (
     <GlassSurface className="relative p-6 sm:p-8">
-      <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-indigo-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-16 -left-16 h-48 w-48 rounded-full bg-blue-400/15 blur-3xl" />
+      <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-[hsl(48_30%_70%/0.25)] blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-16 -left-16 h-48 w-48 rounded-full bg-[hsl(175_15%_20%/0.08)] blur-3xl" />
       <div className="relative space-y-5">
         <div className="flex items-center gap-3">
           <div className="brand-icon-surface flex h-10 w-10 items-center justify-center rounded-xl">

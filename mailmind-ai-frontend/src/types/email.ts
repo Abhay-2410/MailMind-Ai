@@ -40,6 +40,7 @@ export interface SyncInboxResponse {
 
 export interface SyncStatusResponse {
   status: string;
+  phase?: string;
   listed_count: number;
   fetched_count: number;
   new_count: number;

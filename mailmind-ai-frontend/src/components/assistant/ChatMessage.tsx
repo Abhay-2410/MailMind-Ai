@@ -33,7 +33,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
           className={cn(
             "rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm",
             isUser
-              ? "rounded-tr-md bg-brand-gradient text-primary-foreground"
+              ? "rounded-tr-md bg-primary text-primary-foreground"
               : message.is_error
                 ? "rounded-tl-md border border-destructive/30 bg-destructive/10 text-destructive"
                 : "rounded-tl-md border border-border bg-card text-foreground",

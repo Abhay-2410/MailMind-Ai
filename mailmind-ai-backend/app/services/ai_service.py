@@ -44,12 +44,27 @@ class AIService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
+    def _default_groq_model(self) -> str:
+        return self.settings.GROQ_ASSISTANT_MODEL or get_default_model_id()
+
     async def _resolve_model(self, db: AsyncSession, user_id: UUID) -> tuple[str, str]:
+        """Resolve provider/model, forcing Groq whenever GROQ_API_KEY is configured."""
+        if self.settings.GROQ_API_KEY:
+            result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+            user_settings = result.scalar_one_or_none()
+            if user_settings:
+                model = get_model_by_id(user_settings.ai_model)
+                if model is not None and model.provider.value == "groq":
+                    return "groq", user_settings.ai_model
+            return "groq", self._default_groq_model()
+
         result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
         user_settings = result.scalar_one_or_none()
         if user_settings:
             return user_settings.ai_provider, user_settings.ai_model
-        return "openrouter", get_default_model_id()
+        default_id = get_default_model_id()
+        default = get_model_by_id(default_id)
+        return (default.provider.value if default else "openrouter"), default_id
 
     def _get_provider(self, provider_name: str) -> AIProvider:
         return get_provider(provider_name, self.settings)

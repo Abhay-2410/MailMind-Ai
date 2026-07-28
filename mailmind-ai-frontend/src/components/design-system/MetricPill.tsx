@@ -10,7 +10,7 @@ export function MetricPill({ label, value, className }: MetricPillProps) {
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-2 rounded-full border border-primary/15 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 px-3 py-1.5",
+        "inline-flex items-center gap-2 rounded-md border border-border bg-secondary/80 px-3 py-1.5",
         className,
       )}
     >

@@ -43,14 +43,20 @@ def create_app() -> FastAPI:
 
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(CSRFMiddleware)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["X-CSRF-Token"],
-    )
+    cors_kwargs: dict = {
+        "allow_origins": settings.cors_origins,
+        "allow_credentials": True,
+        "allow_methods": ["*"],
+        "allow_headers": ["*"],
+        "expose_headers": ["X-CSRF-Token"],
+    }
+    if not settings.is_production:
+        from app.utils.oauth_redirect import DEV_CORS_ORIGIN_REGEX
+
+        # Phone / LAN SPA origins (172.x, 192.168.x, 10.x) beyond CORS_ORIGINS.
+        cors_kwargs["allow_origin_regex"] = DEV_CORS_ORIGIN_REGEX
+
+    app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     @app.get("/", tags=["root"])
     async def root() -> dict[str, str]:

@@ -105,6 +105,7 @@ export function useInbox(options?: { enabled?: boolean }) {
     queryFn: () => fetchInbox(params),
     placeholderData: keepPreviousData,
     enabled,
+    refetchInterval: 15_000,
   });
 }
 

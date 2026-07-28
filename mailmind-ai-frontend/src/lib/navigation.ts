@@ -65,4 +65,5 @@ export function formatSyncProgress(fetched: number, newCount: number): string {
 export const SYNC_BUTTON_LABEL = {
   idle: "Sync inbox",
   running: "Syncing…",
+  categorizing: "Categorizing…",
 } as const;

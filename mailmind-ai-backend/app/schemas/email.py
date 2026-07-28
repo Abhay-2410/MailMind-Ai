@@ -59,7 +59,7 @@ class EmailListResponse(BaseModel):
 
 
 class SyncInboxRequest(BaseModel):
-    max_results: int = Field(default=100, ge=1, le=500)
+    max_results: int = Field(default=200, ge=1, le=500)
     sync_all: bool = False
     incremental: bool = False
     query: str | None = Field(default=None, max_length=500)
@@ -77,6 +77,7 @@ class SyncInboxResponse(BaseModel):
 
 class SyncStatusResponse(BaseModel):
     status: str
+    phase: str = "idle"
     listed_count: int = 0
     fetched_count: int = 0
     new_count: int = 0

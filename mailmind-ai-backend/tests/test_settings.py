@@ -19,7 +19,7 @@ async def test_get_settings_creates_defaults(db_session: AsyncSession) -> None:
     settings = await service.get_settings(db_session, user)
 
     assert settings.email == "settings@example.com"
-    assert settings.ai_model == "deepseek/deepseek-chat"
+    assert settings.ai_model == "llama-3.1-8b-instant"
     assert settings.timezone == "UTC"
     assert settings.theme == ThemePreference.LIGHT
     assert settings.google_connected is False
@@ -105,7 +105,7 @@ async def test_settings_api_get_and_patch(
 
     get_response = await client.get("/api/v1/settings", headers=headers)
     assert get_response.status_code == 200
-    assert get_response.json()["ai_model"] == "deepseek/deepseek-chat"
+    assert get_response.json()["ai_model"] == "llama-3.1-8b-instant"
 
     patch_response = await client.patch(
         "/api/v1/settings",

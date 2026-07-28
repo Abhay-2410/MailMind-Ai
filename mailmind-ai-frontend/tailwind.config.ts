@@ -55,12 +55,12 @@ const config: Config = {
         },
       },
       backgroundImage: {
-        "brand-gradient": "linear-gradient(135deg, #3b82f6 0%, #4f46e5 48%, #312e81 100%)",
+        "brand-gradient": "linear-gradient(135deg, #1e2928 0%, #2a3836 52%, #15201f 100%)",
         "brand-gradient-soft":
-          "linear-gradient(135deg, #eef2ff 0%, #e0e7ff 38%, #dbeafe 72%, #c7d2fe 100%)",
-        "brand-gradient-vertical": "linear-gradient(180deg, #3b82f6 0%, #312e81 100%)",
+          "linear-gradient(135deg, #ebe7d6 0%, #e2decb 42%, #d9d4be 100%)",
+        "brand-gradient-vertical": "linear-gradient(180deg, #1e2928 0%, #15201f 100%)",
         "mesh-light":
-          "radial-gradient(ellipse 80% 60% at 0% 0%, rgba(59,130,246,0.14), transparent 55%), radial-gradient(ellipse 60% 50% at 100% 0%, rgba(99,102,241,0.1), transparent 50%)",
+          "linear-gradient(rgba(30,41,40,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(30,41,40,0.05) 1px, transparent 1px)",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -68,15 +68,15 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
         xl: "calc(var(--radius) + 4px)",
         "2xl": "calc(var(--radius) + 8px)",
-        "3xl": "1.5rem",
+        "3xl": "1.25rem",
       },
       boxShadow: {
-        soft: "0 4px 24px -4px rgba(59, 130, 246, 0.28)",
-        card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 20px rgba(59, 130, 246, 0.06)",
-        elevated: "0 12px 40px -8px rgba(49, 46, 129, 0.15)",
-        glow: "0 0 0 1px rgba(99, 102, 241, 0.15), 0 8px 32px rgba(59, 130, 246, 0.22)",
+        soft: "0 4px 20px -4px rgba(30, 41, 40, 0.22)",
+        card: "0 1px 2px rgba(30, 41, 40, 0.04), 0 4px 18px rgba(30, 41, 40, 0.06)",
+        elevated: "0 12px 36px -8px rgba(30, 41, 40, 0.14)",
+        glow: "0 0 0 1px rgba(30, 41, 40, 0.08), 0 8px 28px rgba(30, 41, 40, 0.12)",
         "dark-card": "0 0 0 1px rgba(255, 255, 255, 0.05), 0 12px 40px rgba(0, 0, 0, 0.5)",
-        "dark-glow": "0 0 0 1px rgba(99, 102, 241, 0.25), 0 12px 36px rgba(59, 130, 246, 0.2)",
+        "dark-glow": "0 0 0 1px rgba(230, 226, 207, 0.1), 0 12px 36px rgba(0, 0, 0, 0.35)",
       },
       spacing: {
         18: "4.5rem",

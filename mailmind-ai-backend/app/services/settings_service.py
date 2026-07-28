@@ -26,9 +26,12 @@ class SettingsService:
         result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
         settings = result.scalar_one_or_none()
         if settings is None:
+            default_model_id = get_default_model_id()
+            default_model = get_model_by_id(default_model_id)
             settings = UserSettings(
                 user_id=user.id,
-                ai_model=get_default_model_id(),
+                ai_model=default_model_id,
+                ai_provider=default_model.provider.value if default_model else "groq",
             )
             db.add(settings)
             await db.flush()

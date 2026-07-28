@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
 
     OPENROUTER_API_KEY: str = ""
+    # Groq — https://console.groq.com/keys (used by inbox assistant by default)
+    GROQ_API_KEY: str = ""
+    GROQ_ASSISTANT_MODEL: str = "llama-3.1-8b-instant"
 
     RATE_LIMIT_PER_MINUTE: int = 60
 
@@ -59,6 +62,19 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @staticmethod
+    def _normalize_database_url(url: str) -> str:
+        if url.startswith("postgres://"):
+            return "postgresql+asyncpg://" + url[len("postgres://") :]
+        if url.startswith("postgresql://") and "+asyncpg" not in url:
+            return "postgresql+asyncpg://" + url[len("postgresql://") :]
+        return url
+
+    @model_validator(mode="after")
+    def normalize_runtime_urls(self) -> "Settings":
+        object.__setattr__(self, "DATABASE_URL", self._normalize_database_url(self.DATABASE_URL))
+        return self
 
     @property
     def google_oauth_scopes(self) -> list[str]:

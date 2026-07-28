@@ -37,11 +37,19 @@ services:
       dockerfile: Dockerfile
     container_name: mailmind-backend
     restart: unless-stopped
+    # Use env_file without Compose interpolating $ in JWT/CSRF secrets.
+    # Pass literal values by doubling $$ in .env when needed, or keep secrets
+    # free of unescaped $ characters.
     env_file:
       - ./mailmind-ai-backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://mailmind:mailmind@postgres:5432/mailmind
       REDIS_URL: redis://redis:6379/0
+      PORT: "8000"
+      # Public URLs for the Vercel SPA (Google OAuth callback is proxied via vercel.json /api).
+      BACKEND_PUBLIC_URL: https://mailmind-ai-frontend.vercel.app
+      FRONTEND_URL: https://mailmind-ai-frontend.vercel.app
+      CORS_ORIGINS: https://mailmind-ai-frontend.vercel.app,https://mailmind-ai-frontend-abhay-ms-projects.vercel.app,http://localhost:5173,http://127.0.0.1:5173
     ports:
       - "8000:8000"
     depends_on:
@@ -51,6 +59,19 @@ services:
         condition: service_healthy
     volumes:
       - ./mailmind-ai-backend/app:/app/app
+      - ./mailmind-ai-backend/alembic:/app/alembic
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
 
 volumes:
   postgres_data:

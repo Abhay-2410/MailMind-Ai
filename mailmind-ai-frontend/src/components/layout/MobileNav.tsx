@@ -32,7 +32,7 @@ export function MobileNav() {
                 <span
                   className={cn(
                     "flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200",
-                    active && "brand-gradient text-white shadow-soft",
+                    active && "brand-gradient text-primary-foreground shadow-soft",
                   )}
                 >
                   <Icon className="h-4 w-4" />

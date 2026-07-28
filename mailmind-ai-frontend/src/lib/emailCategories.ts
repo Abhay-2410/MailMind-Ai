@@ -12,13 +12,13 @@ export const EMAIL_CATEGORY_OPTIONS: { value: EmailCategoryFilter; label: string
 ];
 
 export const CATEGORY_BADGE_STYLES: Record<string, string> = {
-  important: "bg-brand-green-soft text-brand-green border-brand-green/20",
-  work: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  personal: "bg-violet-50 text-violet-700 border-violet-200",
-  finance: "bg-teal-50 text-teal-700 border-teal-200",
-  promotions: "bg-slate-100 text-slate-600 border-slate-200",
-  social: "bg-violet-50 text-violet-600 border-violet-200",
-  updates: "bg-amber-50 text-amber-700 border-amber-200",
+  important: "bg-brand-green-soft text-brand-green border-border",
+  work: "bg-secondary text-brand-text border-border",
+  personal: "bg-card text-brand-muted border-border",
+  finance: "bg-[hsl(155_18%_90%)] text-brand-text border-border",
+  promotions: "bg-muted text-brand-muted border-border",
+  social: "bg-secondary text-brand-muted border-border",
+  updates: "bg-[hsl(42_30%_90%)] text-brand-text border-border",
 };
 
 export function getCategoryLabel(category: string | null): string | null {

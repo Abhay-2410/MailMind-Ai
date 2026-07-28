@@ -12,10 +12,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useDashboardIntelligence } from "@/hooks/useDashboardIntelligence";
 import { useDashboard } from "@/hooks/useDashboard";
-import { useAutoSync } from "@/hooks/useAutoSync";
-import { formatSyncProgress } from "@/lib/navigation";
 import { fadeUp } from "@/lib/motion";
 import { useAuthStore } from "@/stores/authStore";
+import { useSyncStatus } from "@/providers/SyncProvider";
 
 export function DashboardPageContent() {
   const [searchParams] = useSearchParams();
@@ -24,7 +23,7 @@ export function DashboardPageContent() {
   const isDemoUser = userEmail === "demo@example.com";
   const { data, isLoading, isError, refetch } = useDashboard();
   const intelligence = useDashboardIntelligence(data);
-  const { isSyncing, syncStatus, triggerFullSync } = useAutoSync();
+  const { isSyncing, syncDetail, syncPhase, syncError, triggerFullSync } = useSyncStatus();
 
   if (isLoading) {
     return <DashboardSkeleton />;
@@ -82,11 +81,9 @@ export function DashboardPageContent() {
       <DashboardHero
         lastSynced={lastSynced}
         isSyncing={isSyncing}
-        syncDetail={
-          syncStatus?.status === "running"
-            ? formatSyncProgress(syncStatus.fetched_count, syncStatus.new_count)
-            : null
-        }
+        syncPhase={syncPhase}
+        syncDetail={syncDetail}
+        syncError={syncError?.message ?? null}
         onSync={triggerFullSync}
       />
 

@@ -121,7 +121,7 @@ class SearchService:
             email_result = await db.execute(
                 select(Email)
                 .where(Email.user_id == user.id, Email.gmail_id.in_(gmail_ids))
-                .options(selectinload(Email.category))
+                .options(selectinload(Email.category), selectinload(Email.summary))
                 .order_by(Email.received_at.desc())
             )
             emails = list(email_result.scalars().all())

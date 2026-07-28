@@ -62,7 +62,7 @@ async def test_assistant_ask(db_session: AsyncSession) -> None:
         response = await service.ask(db_session, user, "What deadlines do I have?")
 
     assert "Friday" in response.answer
-    assert response.model_used == "deepseek/deepseek-chat"
+    assert response.model_used == "llama-3.1-8b-instant"
 
 
 @pytest.mark.asyncio
@@ -107,4 +107,4 @@ async def test_assistant_api(
     assert response.status_code == 200
     body = response.json()
     assert "answer" in body
-    assert body["model_used"] == "deepseek/deepseek-chat"
+    assert body["model_used"] == "llama-3.1-8b-instant"

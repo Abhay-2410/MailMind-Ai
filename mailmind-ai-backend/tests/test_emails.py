@@ -73,6 +73,7 @@ async def test_sync_inbox_persists_emails(db_session: AsyncSession) -> None:
     mock_gmail.ensure_valid_access_token = AsyncMock(return_value="access-token")
     mock_gmail.list_message_ids = AsyncMock(return_value=(["gmail-1"], None))
     mock_gmail.fetch_messages_batch = AsyncMock(return_value=[gmail_message])
+    mock_gmail.get_history_id = AsyncMock(return_value="12345")
 
     email_service = EmailService(gmail_service=mock_gmail)
     result, deferred = await email_service.sync_inbox(db_session, user, max_results=10)
@@ -82,6 +83,7 @@ async def test_sync_inbox_persists_emails(db_session: AsyncSession) -> None:
     assert result.synced_count == 1
     assert result.new_count == 1
     assert result.account_email == "gmail@example.com"
+    assert account.gmail_history_id == "12345"
 
     listing = await email_service.list_emails(db_session, user)
     assert listing.total == 1
@@ -137,6 +139,61 @@ async def test_inbox_list_and_detail(
     )
     assert detail_response.status_code == 200
     assert detail_response.json()["body_text"] == "Hello from Gmail"
+
+
+@pytest.mark.asyncio
+async def test_get_email_loads_summary_without_lazy_error(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.email import Email
+    from app.models.summary import PriorityLevel, Summary
+
+    user = User(email="summary@example.com", google_id="g-summary", is_active=True)
+    db_session.add(user)
+    await db_session.flush()
+
+    account = Account(
+        user_id=user.id,
+        email="summary@example.com",
+        access_token_encrypted=encrypt_token("token"),
+        refresh_token_encrypted=encrypt_token("refresh"),
+        token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        is_primary=True,
+        is_active=True,
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    email = Email(
+        user_id=user.id,
+        account_id=account.id,
+        gmail_id="gmail-summary-1",
+        sender="sender@example.com",
+        subject="Has summary",
+        preview="Preview",
+        body_text="Full body",
+        received_at=datetime.now(UTC),
+        is_read=True,
+        is_starred=False,
+        is_important=False,
+    )
+    db_session.add(email)
+    await db_session.flush()
+    db_session.add(
+        Summary(
+            email_id=email.id,
+            summary_text="Short summary",
+            priority_level=PriorityLevel.MEDIUM,
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    email_service = EmailService(gmail_service=AsyncMock())
+    detail = await email_service.get_email(db_session, user, email.id)
+
+    assert detail.summary_text == "Short summary"
+    assert detail.body_text == "Full body"
 
 
 @pytest.mark.asyncio

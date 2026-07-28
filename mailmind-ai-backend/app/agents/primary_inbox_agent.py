@@ -1,4 +1,4 @@
-"""High-precision Primary inbox triage agent (Claude Sonnet 4.6)."""
+"""High-precision Primary inbox triage agent (Groq by default, OpenRouter Claude fallback)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,8 @@ from app.utils.gmail_cleanup_helpers import CleanupCandidate, message_is_old_eno
 
 logger = logging.getLogger(__name__)
 
-PRIMARY_AGENT_MODEL = "anthropic/claude-sonnet-4-6"
+GROQ_PRIMARY_MODEL = "llama-3.3-70b-versatile"
+OPENROUTER_PRIMARY_MODEL = "anthropic/claude-sonnet-4-6"
 CONFIDENCE_THRESHOLD = 0.95
 PRIMARY_AGE_DAYS = 30
 
@@ -49,7 +50,13 @@ class AgentDecision:
 class PrimaryInboxAgent:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self.provider = get_provider("openrouter", self.settings)
+        if self.settings.GROQ_API_KEY:
+            self.provider_name = "groq"
+            self.model_id = GROQ_PRIMARY_MODEL
+        else:
+            self.provider_name = "openrouter"
+            self.model_id = OPENROUTER_PRIMARY_MODEL
+        self.provider = get_provider(self.provider_name, self.settings)
 
     def _append_log(self, entry: dict[str, Any]) -> None:
         entry["logged_at"] = datetime.now(UTC).isoformat()
@@ -162,7 +169,7 @@ class PrimaryInboxAgent:
 
         try:
             result = await self.provider.complete_json(
-                model=PRIMARY_AGENT_MODEL,
+                model=self.model_id,
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=self._build_user_prompt(candidate),
                 temperature=0.1,
@@ -199,7 +206,7 @@ class PrimaryInboxAgent:
                 **decision.__dict__,
                 "dry_run": dry_run,
                 "source": "agent",
-                "model": PRIMARY_AGENT_MODEL,
+                "model": self.model_id,
             }
         )
         return decision

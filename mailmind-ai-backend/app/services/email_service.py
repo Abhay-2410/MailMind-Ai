@@ -27,9 +27,11 @@ from app.utils.validators import clamp_pagination, sanitize_gmail_query, sanitiz
 
 logger = logging.getLogger(__name__)
 
-FAST_SYNC_BATCH = 1000
+FAST_SYNC_BATCH = 500
 GMAIL_LIST_PAGE_SIZE = 500
-SYNC_PHASE_QUERIES = ("in:inbox", "")  # inbox first (fast), then all mail
+# Inbox first for fast UI, then the rest of the mailbox (archives, sent, etc.).
+SYNC_PHASE_QUERIES = ("in:inbox", "")
+CATEGORIZE_AFTER_FULL_SYNC = 5000
 
 
 async def run_full_inbox_sync_job(user_id: UUID) -> None:
@@ -92,10 +94,17 @@ async def run_full_inbox_sync_job(user_id: UUID) -> None:
                         break
 
             await service.apply_gmail_categories_for_user(db, user.id)
+            try:
+                account.gmail_history_id = await service.gmail.get_history_id(
+                    account=account, db=db
+                )
+            except AppError as exc:
+                logger.warning("Could not refresh Gmail historyId after full sync: %s", exc)
             account.last_synced_at = datetime.now(UTC)
             await db.commit()
 
-        await categorize_recent_emails_job(user_id, 1000)
+        await inbox_sync_job_store.update(job, phase="categorizing")
+        await categorize_recent_emails_job(user_id, CATEGORIZE_AFTER_FULL_SYNC)
         await inbox_sync_job_store.complete(job)
         logger.info(
             "Full inbox sync completed for user %s: listed=%s fetched=%s new=%s",
@@ -206,14 +215,15 @@ class EmailService:
     ) -> tuple[SyncInboxResponse, list[str]]:
         account = await self.get_primary_account(db, user.id)
 
+        if incremental and not sync_all and not query:
+            return await self._sync_incremental(db, user, account, max_results=max_results)
+
         gmail_query = sanitize_gmail_query(query) if query else None
 
         if incremental and account.last_synced_at:
             after = account.last_synced_at.astimezone(UTC) - timedelta(minutes=15)
             date_query = f"after:{after.year}/{after.month}/{after.day}"
             gmail_query = f"{date_query} {gmail_query}".strip() if gmail_query else date_query
-
-        existing_ids = await self._existing_gmail_ids(db, account.id)
 
         if sync_all:
             all_ids = await self.gmail.collect_query_message_ids(
@@ -226,7 +236,7 @@ class EmailService:
                 account=account,
                 db=db,
                 query=gmail_query,
-                max_results=min(max_results, 200),
+                max_results=min(max_results, 500),
             )
         else:
             all_ids, _ = await self.gmail.list_message_ids(
@@ -236,7 +246,9 @@ class EmailService:
                 max_results=max_results,
             )
 
-        ids_to_fetch = [gid for gid in all_ids if gid not in existing_ids]
+        # Always refresh metadata for listed IDs (new + existing) so read/star
+        # state stays current; only brand-new IDs count toward new_count.
+        ids_to_fetch = list(dict.fromkeys(all_ids))
         deferred_ids: list[str] = []
 
         if sync_all and len(ids_to_fetch) > FAST_SYNC_BATCH:
@@ -249,6 +261,11 @@ class EmailService:
         synced_emails, new_count, updated_count = await self._bulk_upsert_emails(
             db, user, account, messages
         )
+
+        try:
+            account.gmail_history_id = await self.gmail.get_history_id(account=account, db=db)
+        except AppError as exc:
+            logger.warning("Could not refresh Gmail historyId: %s", exc)
 
         account.last_synced_at = datetime.now(UTC)
         await db.commit()
@@ -265,6 +282,131 @@ class EmailService:
             last_synced_at=account.last_synced_at,
         )
         return response, deferred_ids
+
+    async def _sync_incremental(
+        self,
+        db: AsyncSession,
+        user: User,
+        account: Account,
+        *,
+        max_results: int = 200,
+    ) -> tuple[SyncInboxResponse, list[str]]:
+        """Near real-time sync via Gmail History API, with query fallback."""
+        new_count = 0
+        updated_count = 0
+        deleted_count = 0
+        listed = 0
+
+        history_id = account.gmail_history_id
+        if history_id:
+            try:
+                changes = await self.gmail.list_history_changes(
+                    account=account,
+                    db=db,
+                    start_history_id=history_id,
+                )
+                fetch_ids = list(dict.fromkeys([*changes.added_ids, *changes.updated_ids]))
+                listed = len(fetch_ids) + len(changes.deleted_ids)
+
+                if fetch_ids:
+                    access_token = await self.gmail.ensure_valid_access_token(account, db)
+                    messages = await self.gmail.fetch_messages_batch(
+                        access_token, fetch_ids[: max(max_results, 200)]
+                    )
+                    _emails, new_count, updated_count = await self._bulk_upsert_emails(
+                        db, user, account, messages
+                    )
+
+                if changes.deleted_ids:
+                    deleted_count = await self._delete_emails_by_gmail_ids(
+                        db, account.id, changes.deleted_ids
+                    )
+
+                if changes.history_id:
+                    account.gmail_history_id = changes.history_id
+                else:
+                    account.gmail_history_id = await self.gmail.get_history_id(
+                        account=account, db=db
+                    )
+
+                account.last_synced_at = datetime.now(UTC)
+                await db.commit()
+                await db.refresh(account)
+
+                return (
+                    SyncInboxResponse(
+                        synced_count=listed,
+                        new_count=new_count,
+                        updated_count=updated_count + deleted_count,
+                        account_email=account.email,
+                        last_synced_at=account.last_synced_at,
+                    ),
+                    [],
+                )
+            except AppError as exc:
+                # History ID expired / invalid — fall through to recent query sync.
+                if exc.status_code not in {404, 400}:
+                    raise
+                logger.info(
+                    "Gmail history sync unavailable for %s (%s); falling back to recent query",
+                    account.email,
+                    exc.message,
+                )
+                account.gmail_history_id = None
+
+        after = (account.last_synced_at or datetime.now(UTC)).astimezone(UTC) - timedelta(hours=6)
+        date_query = f"after:{after.year}/{after.month}/{after.day}"
+        all_ids, _ = await self.gmail.list_message_ids(
+            account=account,
+            db=db,
+            query=date_query,
+            max_results=min(max(max_results, 100), 500),
+        )
+        listed = len(all_ids)
+        access_token = await self.gmail.ensure_valid_access_token(account, db)
+        messages = await self.gmail.fetch_messages_batch(access_token, all_ids)
+        _emails, new_count, updated_count = await self._bulk_upsert_emails(
+            db, user, account, messages
+        )
+        try:
+            account.gmail_history_id = await self.gmail.get_history_id(account=account, db=db)
+        except AppError as exc:
+            logger.warning("Could not seed Gmail historyId: %s", exc)
+        account.last_synced_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(account)
+
+        return (
+            SyncInboxResponse(
+                synced_count=listed,
+                new_count=new_count,
+                updated_count=updated_count,
+                account_email=account.email,
+                last_synced_at=account.last_synced_at,
+            ),
+            [],
+        )
+
+    async def _delete_emails_by_gmail_ids(
+        self,
+        db: AsyncSession,
+        account_id: UUID,
+        gmail_ids: list[str],
+    ) -> int:
+        if not gmail_ids:
+            return 0
+        result = await db.execute(
+            select(Email).where(
+                Email.account_id == account_id,
+                Email.gmail_id.in_(gmail_ids),
+            )
+        )
+        rows = list(result.scalars().all())
+        for email in rows:
+            await db.delete(email)
+        if rows:
+            await db.flush()
+        return len(rows)
 
     async def _categorize_uncategorized(
         self,
@@ -587,12 +729,15 @@ class EmailService:
         user: User,
         email_id: UUID,
     ) -> EmailDetail:
-        result = await db.execute(
-            select(Email)
-            .where(Email.id == email_id, Email.user_id == user.id)
-            .options(selectinload(Email.category))
-        )
-        email = result.scalar_one_or_none()
+        async def load_email() -> Email | None:
+            result = await db.execute(
+                select(Email)
+                .where(Email.id == email_id, Email.user_id == user.id)
+                .options(selectinload(Email.category), selectinload(Email.summary))
+            )
+            return result.scalar_one_or_none()
+
+        email = await load_email()
         if email is None:
             raise AppError("Email not found", status_code=404)
 
@@ -612,7 +757,9 @@ class EmailService:
                 if full_message.preview:
                     email.preview = full_message.preview
                 await db.commit()
-                await db.refresh(email)
+                email = await load_email()
+                if email is None:
+                    raise AppError("Email not found", status_code=404)
             except AppError as exc:
                 logger.warning(
                     "Gmail body fetch failed for %s — returning preview only: %s",
@@ -625,13 +772,19 @@ class EmailService:
         return self._to_detail(email)
 
     def _to_list_item(self, email: Email) -> EmailListItem:
+        from sqlalchemy import inspect as sa_inspect
+
         from app.schemas.email import EmailCategoryLabel
 
-        category = (
-            EmailCategoryLabel(email.category.category.value)
-            if email.category
-            else None
-        )
+        state = sa_inspect(email)
+        category = None
+        if "category" not in state.unloaded and email.category is not None:
+            category = EmailCategoryLabel(email.category.category.value)
+
+        summary_text = None
+        if "summary" not in state.unloaded and email.summary is not None:
+            summary_text = email.summary.summary_text
+
         return EmailListItem(
             id=email.id,
             gmail_id=email.gmail_id,
@@ -644,7 +797,7 @@ class EmailService:
             is_starred=email.is_starred,
             is_important=email.is_important,
             category=category,
-            summary_text=email.summary.summary_text if email.summary else None,
+            summary_text=summary_text,
         )
 
     async def categorize_user_emails(

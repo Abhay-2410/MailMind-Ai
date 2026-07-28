@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,21 +44,24 @@ async def readiness_check(
     request: Request,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
-) -> ReadinessResponse:
+) -> ReadinessResponse | JSONResponse:
     _ = request
-    _ = db  # Reserved for future DB ping via session
+    _ = db
     db_ok = await check_database_connection()
 
     redis_ok = False
     try:
-        redis_ok = await redis.ping()
+        redis_ok = bool(await redis.ping())
     except Exception:
         redis_ok = False
 
     all_ok = db_ok and redis_ok
-    return ReadinessResponse(
+    payload = ReadinessResponse(
         status="ok" if all_ok else "degraded",
         database="ok" if db_ok else "unavailable",
         redis="ok" if redis_ok else "unavailable",
         timestamp=datetime.now(UTC),
     )
+    if not all_ok:
+        return JSONResponse(status_code=503, content=payload.model_dump(mode="json"))
+    return payload

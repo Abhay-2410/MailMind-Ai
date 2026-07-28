@@ -12,6 +12,7 @@ from uuid import UUID
 class InboxSyncJob:
     user_id: UUID
     status: str = "idle"  # idle | running | completed | failed
+    phase: str = "idle"  # idle | syncing | categorizing | failed
     listed_count: int = 0
     fetched_count: int = 0
     new_count: int = 0
@@ -41,6 +42,7 @@ class InboxSyncJobStore:
         job = self.get_or_create(user_id)
         async with job.lock:
             job.status = "running"
+            job.phase = "syncing"
             job.listed_count = 0
             job.fetched_count = 0
             job.new_count = 0
@@ -58,6 +60,7 @@ class InboxSyncJobStore:
         fetched_count: int | None = None,
         new_count: int | None = None,
         updated_count: int | None = None,
+        phase: str | None = None,
     ) -> None:
         async with job.lock:
             if listed_count is not None:
@@ -68,15 +71,19 @@ class InboxSyncJobStore:
                 job.new_count = new_count
             if updated_count is not None:
                 job.updated_count = updated_count
+            if phase is not None:
+                job.phase = phase
 
     async def complete(self, job: InboxSyncJob) -> None:
         async with job.lock:
             job.status = "completed"
+            job.phase = "idle"
             job.finished_at = datetime.now(UTC)
 
     async def fail(self, job: InboxSyncJob, error: str) -> None:
         async with job.lock:
             job.status = "failed"
+            job.phase = "failed"
             job.error = error
             job.finished_at = datetime.now(UTC)
 

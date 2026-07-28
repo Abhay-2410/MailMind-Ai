@@ -1,4 +1,5 @@
 ﻿import asyncio
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
@@ -104,24 +105,32 @@ async def sync_status(
     if job is None:
         return SyncStatusResponse(
             status="idle",
+            phase="idle",
             last_synced_at=last_synced_at,
             account_email=account_email,
         )
 
     async with job.lock:
         status = job.status
+        phase = job.phase
+        error = job.error
         if status == "running" and not is_full_sync_running(current_user.id):
-            status = "idle"
-            job.status = "idle"
-            job.error = None
+            status = "failed"
+            phase = "failed"
+            error = error or "Sync interrupted — server restarted. Please sync again."
+            job.status = status
+            job.phase = phase
+            job.error = error
+            job.finished_at = job.finished_at or datetime.now(UTC)
 
         return SyncStatusResponse(
             status=status,
+            phase=phase,
             listed_count=job.listed_count,
             fetched_count=job.fetched_count,
             new_count=job.new_count,
             updated_count=job.updated_count,
-            error=job.error,
+            error=error,
             last_synced_at=last_synced_at,
             account_email=account_email,
         )
@@ -168,5 +177,5 @@ async def sync_inbox(
     )
     if deferred_ids:
         background_tasks.add_task(sync_remaining_emails_job, current_user.id, deferred_ids)
-    background_tasks.add_task(categorize_recent_emails_job, current_user.id, 1000)
+    background_tasks.add_task(categorize_recent_emails_job, current_user.id, 2000)
     return response

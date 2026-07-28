@@ -7,12 +7,12 @@ import { InboxFilters } from "@/components/inbox/InboxFilters";
 import { SummariesList } from "@/components/inbox/SummariesList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useAutoSync } from "@/hooks/useAutoSync";
 import { useInbox } from "@/hooks/useEmails";
 import { useInboxView } from "@/hooks/useInboxView";
 import { ROUTES } from "@/lib/constants";
 import { formatNumber } from "@/lib/format";
 import { SYNC_BUTTON_LABEL } from "@/lib/navigation";
+import { useSyncStatus } from "@/providers/SyncProvider";
 import { useInboxStore } from "@/stores/inboxStore";
 
 export function InboxPage() {
@@ -21,7 +21,8 @@ export function InboxPage() {
   const { view, meta } = useInboxView();
   const { page, setPage, setViewFilter, setCategory, setSearch } = useInboxStore();
   const { data, isLoading, isFetching, isError, refetch } = useInbox();
-  const { isSyncing, syncDetail, syncStatus, triggerFullSync } = useAutoSync();
+  const { isSyncing, syncDetail, syncPhase, syncStatus, syncError, triggerFullSync } =
+    useSyncStatus();
 
   useEffect(() => {
     if (searchParams.get("view") === "categories") {
@@ -43,7 +44,18 @@ export function InboxPage() {
       })}`
     : "Pull the latest messages from Gmail";
 
-  const statusLine = isSyncing ? syncDetail ?? "Syncing inbox…" : lastSyncedLabel;
+  const statusLine = syncError
+    ? syncError.message
+    : isSyncing
+      ? syncDetail ?? "Syncing inbox…"
+      : lastSyncedLabel;
+
+  const syncButtonLabel =
+    syncPhase === "categorizing"
+      ? SYNC_BUTTON_LABEL.categorizing
+      : isSyncing
+        ? SYNC_BUTTON_LABEL.running
+        : SYNC_BUTTON_LABEL.idle;
 
   const listProps = {
     data,
@@ -70,7 +82,9 @@ export function InboxPage() {
             <p className="text-sm font-medium text-brand-text">
               {data ? `${formatNumber(data.total)} emails` : "Loading…"}
             </p>
-            <p className="text-sm text-brand-muted">{statusLine}</p>
+            <p className={`text-sm ${syncError ? "text-destructive" : "text-brand-muted"}`}>
+              {statusLine}
+            </p>
           </div>
           <Button
             onClick={triggerFullSync}
@@ -78,7 +92,7 @@ export function InboxPage() {
             className="inline-flex shrink-0 items-center justify-center gap-2"
           >
             <RefreshCw className={`h-4 w-4 shrink-0 ${isSyncing ? "animate-spin" : ""}`} />
-            <span>{isSyncing ? SYNC_BUTTON_LABEL.running : SYNC_BUTTON_LABEL.idle}</span>
+            <span>{syncButtonLabel}</span>
           </Button>
         </CardContent>
       </Card>

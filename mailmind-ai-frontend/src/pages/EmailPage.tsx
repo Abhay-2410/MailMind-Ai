@@ -42,6 +42,7 @@ export function EmailPage() {
       <EmptyState
         icon={Mail}
         title="Unable to load email"
+        className="min-h-[420px] w-full"
         description={
           isGmailAuth
             ? "Your Gmail connection expired. Sign out and sign in with Google again, then return to this email."
@@ -50,11 +51,11 @@ export function EmailPage() {
               : "This email may have been removed or you may not have access."
         }
         action={
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => void refetch()}>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:justify-center">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => void refetch()}>
               Try again
             </Button>
-            <Button asChild>
+            <Button asChild className="w-full sm:w-auto">
               <Link to={ROUTES.INBOX}>Back to inbox</Link>
             </Button>
           </div>
@@ -64,15 +65,20 @@ export function EmailPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <Button asChild variant="ghost" size="sm" className="-ml-2 text-brand-muted hover:text-brand-text">
+    <div className="space-y-4 sm:space-y-6">
+      <Button
+        asChild
+        variant="ghost"
+        size="sm"
+        className="-ml-2 w-fit text-brand-muted hover:text-brand-text"
+      >
         <Link to={ROUTES.INBOX}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back to inbox
         </Link>
       </Button>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <EmailReader email={email} />
         <div className="space-y-6">
           <AISummaryPanel emailId={email.id} />

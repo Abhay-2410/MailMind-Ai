@@ -14,6 +14,7 @@ import type {
 
 const DELETE_TIMEOUT_MS = 30 * 60 * 1000;
 const POLL_INTERVAL_MS = 800;
+const POLL_TIMEOUT_MS = 15 * 60 * 1000;
 
 export function mapSmartCleanupError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -51,7 +52,8 @@ export async function pollCleanupAnalyze(
   jobId: string,
   onProgress?: (progress: CleanupAnalyzeProgressResponse) => void,
 ): Promise<CleanupAnalyzeResponse> {
-  while (true) {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
     const status = await fetchCleanupAnalyzeProgress(jobId);
     onProgress?.(status);
 
@@ -64,6 +66,7 @@ export async function pollCleanupAnalyze(
 
     await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
   }
+  throw new Error("Analysis timed out — try again");
 }
 
 export async function deleteCleanupMessages(
@@ -132,7 +135,8 @@ export async function pollTriageAnalyze(
   jobId: string,
   onProgress?: (progress: TriageAnalyzeProgressResponse) => void,
 ): Promise<TriageAnalyzeResponse> {
-  while (true) {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
     const status = await fetchTriageAnalyzeProgress(jobId);
     onProgress?.(status);
 
@@ -145,6 +149,7 @@ export async function pollTriageAnalyze(
 
     await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
   }
+  throw new Error("Inbox triage timed out — try again");
 }
 
 export async function deleteTriageTier(

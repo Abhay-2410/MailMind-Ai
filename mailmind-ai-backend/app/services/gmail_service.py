@@ -49,6 +49,14 @@ class GmailMessage:
 
 
 @dataclass
+class GmailHistoryChanges:
+    added_ids: list[str]
+    deleted_ids: list[str]
+    updated_ids: list[str]
+    history_id: str | None
+
+
+@dataclass
 class GmailListResult:
     messages: list[GmailMessage]
     next_page_token: str | None
@@ -145,6 +153,13 @@ class GmailService:
         return await self._persist_refreshed_token(account, db, token_data)
 
     def scope_includes_gmail_delete(self, scope: str | None) -> bool:
+        """Permanent delete requires full Gmail scope (mail.google.com)."""
+        if not scope:
+            return False
+        full = self.settings.gmail_full_scope
+        return full in scope or "mail.google.com" in scope
+
+    def scope_includes_gmail_modify(self, scope: str | None) -> bool:
         if not scope:
             return False
         full = self.settings.gmail_full_scope
@@ -155,9 +170,6 @@ class GmailService:
             or modify in scope
             or "gmail.modify" in scope
         )
-
-    def scope_includes_gmail_modify(self, scope: str | None) -> bool:
-        return self.scope_includes_gmail_delete(scope)
 
     async def ensure_valid_access_token(
         self,
@@ -247,6 +259,9 @@ class GmailService:
             )
         if response.status_code == 403:
             raise AppError("Permission error — please re-login", status_code=403)
+        if response.status_code == 404:
+            detail = self._gmail_error_detail(response)
+            raise AppError(detail or "Gmail resource not found", status_code=404)
         if response.status_code == 429:
             raise AppError("Rate limited — wait 30s and retry", status_code=429)
         if response.status_code != 200:
@@ -312,6 +327,87 @@ class GmailService:
                     break
 
         return total
+
+    async def get_profile(
+        self,
+        *,
+        account: Account,
+        db: AsyncSession,
+        client: httpx.AsyncClient | None = None,
+    ) -> dict[str, Any]:
+        return await self.request_json("GET", "profile", account, db, client=client)
+
+    async def get_history_id(self, *, account: Account, db: AsyncSession) -> str | None:
+        profile = await self.get_profile(account=account, db=db)
+        history_id = profile.get("historyId")
+        return str(history_id) if history_id is not None else None
+
+    async def list_history_changes(
+        self,
+        *,
+        account: Account,
+        db: AsyncSession,
+        start_history_id: str,
+        max_pages: int = 20,
+    ) -> GmailHistoryChanges:
+        """Return mailbox changes since start_history_id (Gmail History API)."""
+        added: set[str] = set()
+        deleted: set[str] = set()
+        updated: set[str] = set()
+        page_token: str | None = None
+        latest_history_id: str | None = None
+
+        for _ in range(max_pages):
+            params: dict[str, Any] = {
+                "startHistoryId": start_history_id,
+                "maxResults": 500,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            data = await self.request_json(
+                "GET",
+                "history",
+                account,
+                db,
+                params=params,
+            )
+            if data.get("historyId") is not None:
+                latest_history_id = str(data["historyId"])
+
+            for entry in data.get("history", []) or []:
+                for item in entry.get("messagesAdded", []) or []:
+                    message = item.get("message") or {}
+                    message_id = message.get("id")
+                    if message_id:
+                        added.add(message_id)
+                        deleted.discard(message_id)
+                for item in entry.get("messagesDeleted", []) or []:
+                    message = item.get("message") or {}
+                    message_id = message.get("id")
+                    if message_id:
+                        deleted.add(message_id)
+                        added.discard(message_id)
+                        updated.discard(message_id)
+                for key in ("labelsAdded", "labelsRemoved"):
+                    for item in entry.get(key, []) or []:
+                        message = item.get("message") or {}
+                        message_id = message.get("id")
+                        if message_id and message_id not in deleted:
+                            updated.add(message_id)
+
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        updated -= added
+        updated -= deleted
+        return GmailHistoryChanges(
+            added_ids=list(added),
+            deleted_ids=list(deleted),
+            updated_ids=list(updated),
+            history_id=latest_history_id,
+        )
 
     async def collect_query_message_ids(
         self,

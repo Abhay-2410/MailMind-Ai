@@ -10,11 +10,15 @@ interface ImportantEmailsCardProps {
   data: ImportantEmailsData;
 }
 
+interface AISummariesCardProps {
+  data: import("@/lib/dashboard/intelligenceMappers").AISummariesData;
+}
+
 export function ImportantEmailsCard({ data }: ImportantEmailsCardProps) {
   return (
-    <PremiumCard className="flex h-full flex-col">
-      <div className="mb-4 flex items-start justify-between">
-        <div className="brand-icon-surface flex h-10 w-10 items-center justify-center rounded-xl">
+    <PremiumCard className="flex h-full min-h-[320px] w-full flex-col">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="brand-icon-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-xl">
           <Mail className="h-5 w-5" />
         </div>
         <span className="text-xs font-semibold text-muted-foreground">01</span>
@@ -24,36 +28,36 @@ export function ImportantEmailsCard({ data }: ImportantEmailsCardProps) {
       <div className="mt-5">
         <MetricPill label="important" value={formatNumber(data.count)} />
       </div>
-      {data.senders.length > 0 ? (
-        <ul className="mt-4 space-y-2">
-          {data.senders.map((sender) => (
-            <li key={sender} className="truncate text-sm font-medium text-brand-text">
-              {sender}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-4 text-sm text-brand-muted">No important senders yet — sync your inbox.</p>
-      )}
-      <Button asChild variant="outline" className="mt-auto w-full gap-2 rounded-xl">
+      <div className="mt-4 flex-1">
+        {data.senders.length > 0 ? (
+          <ul className="space-y-2">
+            {data.senders.map((sender) => (
+              <li key={sender} className="truncate text-sm font-medium text-brand-text">
+                {sender}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm leading-relaxed text-brand-muted">
+            No important senders yet — sync your inbox.
+          </p>
+        )}
+      </div>
+      <Button asChild variant="outline" className="mt-6 w-full shrink-0">
         <Link to={data.href} className="inline-flex w-full items-center justify-center gap-2">
           <span>Open inbox</span>
-          <ArrowRight className="h-4 w-4 shrink-0" />
+          <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
         </Link>
       </Button>
     </PremiumCard>
   );
 }
 
-interface AISummariesCardProps {
-  data: import("@/lib/dashboard/intelligenceMappers").AISummariesData;
-}
-
 export function AISummariesCard({ data }: AISummariesCardProps) {
   return (
-    <PremiumCard className="flex h-full flex-col">
-      <div className="mb-4 flex items-start justify-between">
-        <div className="brand-icon-surface flex h-10 w-10 items-center justify-center rounded-xl">
+    <PremiumCard className="flex h-full min-h-[320px] w-full flex-col">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="brand-icon-surface flex h-10 w-10 shrink-0 items-center justify-center rounded-xl">
           <Sparkles className="h-5 w-5" />
         </div>
         <span className="text-xs font-semibold text-muted-foreground">02</span>
@@ -64,13 +68,15 @@ export function AISummariesCard({ data }: AISummariesCardProps) {
         <MetricPill label="today" value={formatNumber(data.todayCount)} />
         <MetricPill label="mins saved" value={formatNumber(data.timeSavedMinutes)} />
       </div>
-      {data.latestPreview ? (
-        <p className="mt-4 line-clamp-3 text-sm leading-relaxed text-brand-muted">
-          {data.latestPreview}
-        </p>
-      ) : (
-        <p className="mt-4 text-sm text-brand-muted">Summarize an email to see insights here.</p>
-      )}
+      <div className="mt-4 flex-1">
+        {data.latestPreview ? (
+          <p className="line-clamp-3 text-sm leading-relaxed text-brand-muted">{data.latestPreview}</p>
+        ) : (
+          <p className="text-sm leading-relaxed text-brand-muted">
+            Summarize an email to see insights here.
+          </p>
+        )}
+      </div>
     </PremiumCard>
   );
 }

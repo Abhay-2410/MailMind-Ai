@@ -62,8 +62,7 @@ async def get_cleanup_analyze_progress(
     cleanup_service: CleanupService = Depends(get_cleanup_service),
 ) -> CleanupAnalyzeProgressResponse:
     _ = request
-    _ = current_user
-    return await cleanup_service.get_analyze_progress(job_id)
+    return await cleanup_service.get_analyze_progress(job_id, current_user)
 
 
 @router.post("/analyze/sync", response_model=CleanupAnalyzeResponse)
@@ -128,8 +127,7 @@ async def get_triage_analyze_progress(
     cleanup_service: CleanupService = Depends(get_cleanup_service),
 ) -> TriageAnalyzeProgressResponse:
     _ = request
-    _ = current_user
-    return await cleanup_service.get_triage_analyze_progress(job_id)
+    return await cleanup_service.get_triage_analyze_progress(job_id, current_user)
 
 
 @router.post("/triage/delete", response_model=TriageDeleteResponse)

@@ -8,9 +8,10 @@ import { useAuth } from "@/hooks/useAuth";
 interface HeaderProps {
   title: string;
   description?: string;
+  descriptionTone?: "error";
 }
 
-export function Header({ title, description }: HeaderProps) {
+export function Header({ title, description, descriptionTone }: HeaderProps) {
   const { user, logout } = useAuth();
 
   const initials = user?.full_name
@@ -25,7 +26,15 @@ export function Header({ title, description }: HeaderProps) {
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="heading-page truncate">{title}</h1>
-          {description ? <p className="mt-0.5 truncate text-body">{description}</p> : null}
+          {description ? (
+            <p
+              className={`mt-0.5 truncate text-sm ${
+                descriptionTone === "error" ? "font-medium text-destructive" : "text-body"
+              }`}
+            >
+              {description}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">

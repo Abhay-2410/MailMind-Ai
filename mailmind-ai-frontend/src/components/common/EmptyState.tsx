@@ -23,7 +23,11 @@ export function EmptyState({ icon: Icon, title, description, action, className }
       </div>
       <h3 className="text-lg font-semibold text-foreground">{title}</h3>
       <p className="mt-2 max-w-sm text-body">{description}</p>
-      {action ? <div className="mt-6">{action}</div> : null}
+      {action ? (
+        <div className="mt-6 flex w-full max-w-md flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center sm:justify-center">
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }

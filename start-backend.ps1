@@ -1,14 +1,8 @@
-# Run the MailMind backend from the repo root (fixes "No module named 'app'")
+# Start MailMind backend — Docker-first (migrations via entrypoint), local venv fallback.
 $ErrorActionPreference = "Stop"
-$backend = Join-Path $PSScriptRoot "mailmind-ai-backend"
-
-if (-not (Test-Path "$backend\.venv\Scripts\uvicorn.exe")) {
-  Write-Host "Backend venv not found. Create it first:" -ForegroundColor Red
-  Write-Host "  cd mailmind-ai-backend" -ForegroundColor Yellow
-  Write-Host "  python -m venv .venv" -ForegroundColor Yellow
-  Write-Host "  .\.venv\Scripts\pip install -r requirements.txt" -ForegroundColor Yellow
-  exit 1
-}
+$root = $PSScriptRoot
+$backend = Join-Path $root "mailmind-ai-backend"
+$composeFile = Join-Path $root "docker-compose.yml"
 
 function Stop-PortListeners {
   param([int]$Port)
@@ -20,6 +14,19 @@ function Stop-PortListeners {
   }
 }
 
+function Wait-BackendReady {
+  param([int]$Port = 8000, [int]$TimeoutSec = 90)
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  do {
+    try {
+      $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/v1/health/ready" -TimeoutSec 3 -UseBasicParsing
+      if ($r.StatusCode -eq 200) { return $true }
+    } catch { }
+    Start-Sleep -Seconds 2
+  } while ((Get-Date) -lt $deadline)
+  return $false
+}
+
 function Read-EnvValue {
   param([string]$File, [string]$Key, [string]$Default)
   if (-not (Test-Path $File)) { return $Default }
@@ -28,31 +35,69 @@ function Read-EnvValue {
   return $Default
 }
 
-function Test-BackendHealthy {
-  param([int]$Port)
-  try {
-    $r = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/v1/auth/google/oauth-config" -TimeoutSec 3
-    return ($null -ne $r.redirect_uri)
-  } catch {
-    return $false
-  }
-}
-
 if (-not (Test-Path "$backend\.env")) {
   if (Test-Path "$backend\.env.example") {
     Copy-Item "$backend\.env.example" "$backend\.env" -Force
     Write-Host "Copied .env.example -> .env (edit secrets before production)" -ForegroundColor Yellow
-  } else {
-    Write-Host "Warning: mailmind-ai-backend/.env not found" -ForegroundColor Yellow
   }
 }
 
 $envFile = Join-Path $backend ".env"
-$port = [int](Read-EnvValue -File $envFile -Key "PORT" -Default "8002")
-$publicUrl = Read-EnvValue -File $envFile -Key "BACKEND_PUBLIC_URL" -Default "http://localhost:$port"
-$redirectUri = "$($publicUrl.TrimEnd('/'))/api/v1/auth/google/callback"
+$port = [int](Read-EnvValue -File $envFile -Key "PORT" -Default "8000")
+if ($port -ne 8000) {
+  Write-Host "Warning: Vite proxy expects PORT=8000 (found $port). Prefer PORT=8000 in .env." -ForegroundColor Yellow
+}
 
-# Clear stale listeners and orphaned uvicorn processes
+# --- Docker-first path ---
+$dockerOk = $false
+if (Get-Command docker -ErrorAction SilentlyContinue) {
+  try {
+    docker info 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $dockerOk = $true }
+  } catch { $dockerOk = $false }
+}
+
+if ($dockerOk) {
+  Write-Host "Starting MailMind via Docker Compose (postgres + redis + backend)..." -ForegroundColor Cyan
+  Stop-PortListeners -Port 8000
+  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine -match "uvicorn.*app\.main:app" } |
+    ForEach-Object { cmd /c "taskkill /F /PID $($_.ProcessId) /T 2>nul" | Out-Null }
+
+  Set-Location $root
+  docker compose -f $composeFile up -d --build postgres redis backend
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Docker compose failed — falling back to local venv if available." -ForegroundColor Yellow
+    $dockerOk = $false
+  } else {
+    Write-Host "Waiting for backend readiness at http://localhost:8000 ..." -ForegroundColor Cyan
+    if (Wait-BackendReady -Port 8000 -TimeoutSec 120) {
+      Write-Host ""
+      Write-Host "MailMind backend ready (Docker)." -ForegroundColor Green
+      Write-Host "  API:    http://localhost:8000" -ForegroundColor Green
+      Write-Host "  Docs:   http://localhost:8000/docs" -ForegroundColor Green
+      Write-Host "  Health: http://localhost:8000/api/v1/health/ready" -ForegroundColor Green
+      Write-Host ""
+      Write-Host 'Streaming container logs (Ctrl+C stops logs only; container keeps running).' -ForegroundColor Yellow
+      docker compose -f $composeFile logs -f --tail=50 backend
+      exit 0
+    }
+    Write-Host "Backend did not become ready in time. Check: docker compose logs backend" -ForegroundColor Red
+    exit 1
+  }
+}
+
+# --- Local venv fallback ---
+Write-Host "Docker unavailable — using local venv (requires working Python + greenlet)." -ForegroundColor Yellow
+
+if (-not (Test-Path "$backend\.venv\Scripts\uvicorn.exe")) {
+  Write-Host "Backend venv not found. Create it first:" -ForegroundColor Red
+  Write-Host "  cd mailmind-ai-backend" -ForegroundColor Yellow
+  Write-Host "  python -m venv .venv" -ForegroundColor Yellow
+  Write-Host "  .\.venv\Scripts\pip install -r requirements.txt" -ForegroundColor Yellow
+  exit 1
+}
+
 foreach ($p in @(8000, 8001, 8002, 8003, 8020, $port)) {
   Stop-PortListeners -Port $p
 }
@@ -66,7 +111,6 @@ Set-Location $backend
 Write-Host "Checking database connectivity..." -ForegroundColor Cyan
 & ".\.venv\Scripts\python.exe" -c @"
 import asyncio
-import sys
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.config import get_settings
@@ -90,14 +134,13 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Running database migrations..." -ForegroundColor Cyan
 & ".\.venv\Scripts\alembic.exe" upgrade head
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "Database migration failed. Check PostgreSQL is running and DATABASE_URL in .env." -ForegroundColor Red
+  Write-Host "Database migration failed." -ForegroundColor Red
   exit 1
 }
 
 Write-Host "Checking Redis connectivity..." -ForegroundColor Cyan
 & ".\.venv\Scripts\python.exe" -c @"
 import asyncio
-import sys
 from app.core.config import get_settings
 from app.core.redis import init_redis, close_redis
 
@@ -116,22 +159,13 @@ if ($LASTEXITCODE -ne 0) {
   exit 1
 }
 
+$publicUrl = Read-EnvValue -File $envFile -Key "BACKEND_PUBLIC_URL" -Default "http://localhost:$port"
+$redirectUri = "$($publicUrl.TrimEnd('/'))/api/v1/auth/google/callback"
+
 Write-Host ""
-Write-Host "MailMind backend starting..." -ForegroundColor Cyan
+Write-Host "MailMind backend starting (local)..." -ForegroundColor Cyan
 Write-Host "  API:    http://localhost:$port" -ForegroundColor Green
 Write-Host "  Docs:   http://localhost:$port/docs" -ForegroundColor Green
-Write-Host "  Health: http://localhost:$port/api/v1/health" -ForegroundColor Green
-Write-Host "  OAuth:  http://localhost:$port/api/v1/auth/google/oauth-config" -ForegroundColor Green
+Write-Host "  OAuth:  $redirectUri" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Google Authorized redirect URI must be exactly:" -ForegroundColor Yellow
-Write-Host "  $redirectUri" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "Note: Port 8000 may have ghost listeners on Windows. Using PORT=$port from .env." -ForegroundColor DarkYellow
-Write-Host "After a reboot you can switch back to PORT=8000 in .env if preferred." -ForegroundColor DarkYellow
-Write-Host ""
-Write-Host "Press Ctrl+C to stop." -ForegroundColor Yellow
-Write-Host ""
-# Note: --reload is intentionally disabled. On Windows the reloader's shared
-# socket leaks "ghost" LISTENING sockets on restart that can't be killed without
-# a reboot. Running a single process keeps the dev port clean.
 & ".\.venv\Scripts\uvicorn.exe" app.main:app --host 127.0.0.1 --port $port

@@ -38,18 +38,18 @@ export function IntelligenceGrid({
         variants={staggerContainer}
         initial="initial"
         animate="animate"
-        className="grid gap-5 sm:grid-cols-2"
+        className="grid gap-5 sm:grid-cols-2 sm:items-stretch"
       >
-        <motion.div variants={staggerItem}>
+        <motion.div variants={staggerItem} className="flex">
           <ImportantEmailsCard data={important} />
         </motion.div>
-        <motion.div variants={staggerItem}>
+        <motion.div variants={staggerItem} className="flex">
           <AISummariesCard data={summaries} />
         </motion.div>
-        <motion.div variants={staggerItem}>
+        <motion.div variants={staggerItem} className="flex">
           <SmartRepliesCard data={replies} />
         </motion.div>
-        <motion.div variants={staggerItem}>
+        <motion.div variants={staggerItem} className="flex">
           <FollowUpsCard data={followUps} />
         </motion.div>
       </motion.div>
