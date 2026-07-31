@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://mailmind-backend.onrender.com/api/:path*"
+      "destination": "https://mats-effect-anticipated-resistance.trycloudflare.com/api/:path*"
     },
     {
       "source": "/((?!assets/).*)",
