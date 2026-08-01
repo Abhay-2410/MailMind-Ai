@@ -43,7 +43,8 @@ export function AIModelSettings({ settings }: AIModelSettingsProps) {
           AI model
         </CardTitle>
         <CardDescription>
-          Groq powers the inbox assistant. Choose a Groq model here for summaries and replies too.
+          Choose the model used for summaries, replies, search, and assistant. OpenRouter models
+          require OPENROUTER_API_KEY on the API; Groq models require GROQ_API_KEY.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

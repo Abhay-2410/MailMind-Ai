@@ -6,7 +6,8 @@ export function useAuth() {
 
   const loginWithGoogle = () => {
     const origin = encodeURIComponent(window.location.origin);
-    window.location.assign(`${API_BASE_URL}/auth/google/login/redirect?origin=${origin}`);
+    const loginUrl = `${API_BASE_URL}/auth/google/login/redirect?origin=${origin}`;
+    window.location.assign(loginUrl);
   };
 
   const loginDev = async () => {

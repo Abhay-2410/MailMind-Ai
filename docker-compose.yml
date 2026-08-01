@@ -43,13 +43,13 @@ services:
     env_file:
       - ./mailmind-ai-backend/.env
     environment:
-      DATABASE_URL: postgresql+asyncpg://mailmind:mailmind@postgres:5432/mailmind
       REDIS_URL: redis://redis:6379/0
       PORT: "8000"
-      # Public URLs for the Vercel SPA (Google OAuth callback is proxied via vercel.json /api).
-      BACKEND_PUBLIC_URL: https://mailmind-ai-frontend.vercel.app
-      FRONTEND_URL: https://mailmind-ai-frontend.vercel.app
-      CORS_ORIGINS: https://mailmind-ai-frontend.vercel.app,https://mailmind-ai-frontend-abhay-ms-projects.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+      # Local Docker defaults — keep OAuth on this machine (not Vercel tunnel).
+      # For phone/Vercel testing, override these and point vercel.json /api proxy at a live tunnel.
+      BACKEND_PUBLIC_URL: http://localhost:8000
+      FRONTEND_URL: http://localhost:5173
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,https://mailmind-ai-frontend.vercel.app,https://mailmind-ai-frontend-abhay-ms-projects.vercel.app
     ports:
       - "8000:8000"
     depends_on:

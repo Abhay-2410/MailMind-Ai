@@ -15,6 +15,45 @@ interface OAuthSetupHintProps {
   showMismatchHelp?: boolean;
 }
 
+function apiOriginFromBase(apiBase: string): string | null {
+  try {
+    const url = new URL(apiBase, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    if (!/^https?:$/i.test(url.protocol)) return null;
+    // "/api/v1" → strip path for callback host
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function buildStaticConfig(pageOrigin: string): OAuthConfig | null {
+  const apiOrigin = apiOriginFromBase(API_BASE_URL);
+  const isAbsoluteApi = /^https?:\/\//i.test(API_BASE_URL);
+  if (!isAbsoluteApi || !apiOrigin) return null;
+
+  const redirectUri = `${apiOrigin}/api/v1/auth/google/callback`;
+  const required = [
+    redirectUri,
+    "http://localhost:8000/api/v1/auth/google/callback",
+    "http://127.0.0.1:8000/api/v1/auth/google/callback",
+  ];
+  const origins = [
+    pageOrigin,
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://mailmind-ai-frontend.vercel.app",
+    "https://mailmind-ai-frontend-abhay-ms-projects.vercel.app",
+  ].filter((value, index, all) => value && all.indexOf(value) === index);
+
+  return {
+    google_configured: true,
+    google_console_url: "https://console.cloud.google.com/apis/credentials",
+    redirect_uri: redirectUri,
+    required_redirect_uris: required,
+    authorized_origins: origins,
+  };
+}
+
 export function OAuthSetupHint({ showMismatchHelp = false }: OAuthSetupHintProps) {
   const pageOrigin = typeof window !== "undefined" ? window.location.origin : "";
   const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(pageOrigin);
@@ -22,12 +61,18 @@ export function OAuthSetupHint({ showMismatchHelp = false }: OAuthSetupHintProps
   const needsSetupHelp = showMismatchHelp || !isLocalhost;
 
   const { data } = useQuery({
-    queryKey: ["oauth-config", pageOrigin],
+    queryKey: ["oauth-config", pageOrigin, API_BASE_URL],
     queryFn: async () => {
       const qs = pageOrigin ? `?origin=${encodeURIComponent(pageOrigin)}` : "";
-      const response = await fetch(`${API_BASE_URL}/auth/google/oauth-config${qs}`);
-      if (!response.ok) return null;
-      return response.json() as Promise<OAuthConfig>;
+      try {
+        const response = await fetch(`${API_BASE_URL}/auth/google/oauth-config${qs}`);
+        if (response.ok) {
+          return (await response.json()) as OAuthConfig;
+        }
+      } catch {
+        // Fall through to static production hint (oauth-config is 404 in production).
+      }
+      return buildStaticConfig(pageOrigin);
     },
     staleTime: 60_000,
     retry: false,
@@ -42,8 +87,7 @@ export function OAuthSetupHint({ showMismatchHelp = false }: OAuthSetupHintProps
       <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-xs text-amber-900">
         Google OAuth is not configured on the backend. Add{" "}
         <code className="font-mono">GOOGLE_CLIENT_ID</code> and{" "}
-        <code className="font-mono">GOOGLE_CLIENT_SECRET</code> to{" "}
-        <code className="font-mono">mailmind-ai-backend/.env</code>.
+        <code className="font-mono">GOOGLE_CLIENT_SECRET</code> on the API host.
       </p>
     );
   }
@@ -52,12 +96,14 @@ export function OAuthSetupHint({ showMismatchHelp = false }: OAuthSetupHintProps
     return null;
   }
 
-  const redirectUris = data.required_redirect_uris.includes(data.redirect_uri)
-    ? data.required_redirect_uris
-    : [data.redirect_uri, ...data.required_redirect_uris];
-  const origins = data.authorized_origins.includes(pageOrigin)
-    ? data.authorized_origins
-    : [...data.authorized_origins, pageOrigin].filter(Boolean);
+  const redirectUris = [
+    data.redirect_uri,
+    ...data.required_redirect_uris.filter((uri) => uri !== data.redirect_uri),
+  ];
+  const origins = [
+    ...(pageOrigin ? [pageOrigin] : []),
+    ...data.authorized_origins.filter((origin) => origin !== pageOrigin),
+  ];
 
   return (
     <details
@@ -66,13 +112,14 @@ export function OAuthSetupHint({ showMismatchHelp = false }: OAuthSetupHintProps
     >
       <summary className="cursor-pointer font-medium">
         {isVercelHost
-          ? "Access blocked? Add these Vercel URLs in Google Cloud Console"
+          ? "Access blocked? Add these URLs in Google Cloud Console"
           : "Google sign-in blocked? Fix OAuth in Cloud Console"}
       </summary>
       <div className="mt-3 space-y-2">
         <p>
           Google shows <strong>Access blocked</strong> when the redirect URI is missing or your
-          account is not a Test user. Open{" "}
+          account is not a Test user. Production uses the <strong>API host</strong> callback (Render),
+          not a Vercel <code className="font-mono">/api</code> path. Open{" "}
           <a href={data.google_console_url} target="_blank" rel="noreferrer" className="underline">
             OAuth client
           </a>{" "}

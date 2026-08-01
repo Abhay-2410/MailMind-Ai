@@ -39,6 +39,36 @@ async def test_google_oauth_config_endpoint(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_google_oauth_config_vercel_origin_uses_api_callback(client: AsyncClient) -> None:
+    """Hosted SPA calls the API host directly — Google redirect stays on BACKEND_PUBLIC_URL."""
+    settings = get_settings()
+    vercel = "https://mailmind-ai-frontend.vercel.app"
+    response = await client.get(
+        "/api/v1/auth/google/oauth-config",
+        params={"origin": vercel},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["redirect_uri"] == settings.google_oauth_redirect_uri
+    assert settings.google_oauth_redirect_uri in body["required_redirect_uris"]
+    assert body["required_redirect_uris"][0] == settings.google_oauth_redirect_uri
+    assert vercel in body["authorized_origins"]
+    assert f"{vercel}/api/v1/auth/google/callback" not in body["required_redirect_uris"]
+
+
+@pytest.mark.asyncio
+async def test_google_login_vercel_origin_uses_backend_redirect(client: AsyncClient) -> None:
+    response = await client.get(
+        "/api/v1/auth/google/login",
+        params={"origin": "https://mailmind-ai-frontend.vercel.app"},
+    )
+    assert response.status_code == 200
+    parsed = urlparse(response.json()["authorization_url"])
+    query = parse_qs(parsed.query)
+    assert query["redirect_uri"] == ["http://localhost:8000/api/v1/auth/google/callback"]
+
+
+@pytest.mark.asyncio
 async def test_google_login_keeps_backend_redirect_uri_with_origin(client: AsyncClient) -> None:
     response = await client.get(
         "/api/v1/auth/google/login",

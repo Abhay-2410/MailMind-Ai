@@ -1,6 +1,7 @@
-# Render Blueprint — backend API + Postgres + Redis for MailMind
+# Render Blueprint — backend API + Redis for MailMind (Postgres via Supabase)
 # Deploy: https://dashboard.render.com/select-repo?type=blueprint
-# After deploy, set VITE_API_BASE_URL on Vercel to https://<backend-service>.onrender.com/api/v1
+# After deploy, set Vercel VITE_API_BASE_URL to https://<backend-service>.onrender.com/api/v1
+# Set BACKEND_PUBLIC_URL to that same https://…onrender.com host (Google OAuth redirect).
 
 services:
   - type: web
@@ -20,9 +21,7 @@ services:
       - key: HOST
         value: "0.0.0.0"
       - key: DATABASE_URL
-        fromDatabase:
-          name: mailmind-postgres
-          property: connectionString
+        sync: false
       - key: REDIS_URL
         fromService:
           name: mailmind-redis
@@ -31,13 +30,13 @@ services:
       - key: BACKEND_PUBLIC_URL
         sync: false
       - key: FRONTEND_URL
-        sync: false
+        value: https://mailmind-ai-frontend.vercel.app
       - key: CORS_ORIGINS
-        sync: false
+        value: https://mailmind-ai-frontend.vercel.app,https://mailmind-ai-frontend-abhay-ms-projects.vercel.app
       - key: JWT_SECRET_KEY
-        generateValue: true
+        sync: false
       - key: CSRF_SECRET
-        generateValue: true
+        sync: false
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID
@@ -56,9 +55,3 @@ services:
     plan: free
     maxmemoryPolicy: allkeys-lru
     ipAllowList: []
-
-databases:
-  - name: mailmind-postgres
-    plan: free
-    databaseName: mailmind
-    user: mailmind

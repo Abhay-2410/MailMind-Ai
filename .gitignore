@@ -41,6 +41,8 @@ Thumbs.db
 *.log
 logs/
 cleanup_log.json
+inbox_triage_log.json
+debug-*.log
 
 # Database
 *.db

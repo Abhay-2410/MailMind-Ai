@@ -2,31 +2,20 @@
 
 ## Architecture
 
-Vercel hosts the **frontend only**. The FastAPI API + Postgres + Redis cannot run on Vercel
-(they need long-running containers). Deploy the API on Render (or Railway/Fly), then point
-the Vercel app at that API URL.
+Vercel hosts the **frontend only**. The FastAPI API + Redis run on Render; Postgres can be
+Supabase (recommended) or another hosted Postgres.
 
 ```txt
-Browser → Vercel (React) → Render/Railway (FastAPI + Postgres + Redis)
+Browser → Vercel (React) → Render (FastAPI + Redis) → Supabase Postgres
 ```
 
-## 1. Frontend on Vercel
+Do **not** proxy `/api` through ephemeral Cloudflare tunnels. Set `VITE_API_BASE_URL` to the
+Render API so auth cookies and OAuth callbacks stay on a stable host.
 
-From repo root (or the frontend folder):
+Free Render web services cold-start after idle (~30–60s). The first request after sleep can be
+slow; wait and retry rather than reintroducing a tunnel.
 
-```powershell
-cd mailmind-ai-frontend
-vercel link          # first time: create/link project, Root Directory = mailmind-ai-frontend if linking from monorepo
-vercel --prod
-```
-
-After the API is live, set this env in the Vercel project and redeploy:
-
-| Variable | Value |
-|----------|--------|
-| `VITE_API_BASE_URL` | `https://YOUR-API-HOST/api/v1` |
-
-## 2. Backend on Render
+## 1. Backend on Render
 
 1. Push this repo to GitHub (includes `render.yaml`).
 2. Open [Render Blueprint](https://dashboard.render.com/select-repo?type=blueprint) and select the repo.
@@ -34,54 +23,80 @@ After the API is live, set this env in the Vercel project and redeploy:
 
 | Variable | Example |
 |----------|---------|
+| `APP_ENV` | `production` (set in blueprint) |
+| `DATABASE_URL` | Supabase Session pooler URL (see §2b) |
 | `BACKEND_PUBLIC_URL` | `https://mailmind-backend.onrender.com` |
-| `FRONTEND_URL` | `https://your-app.vercel.app` |
-| `CORS_ORIGINS` | `https://your-app.vercel.app` |
+| `FRONTEND_URL` | `https://mailmind-ai-frontend.vercel.app` |
+| `CORS_ORIGINS` | `https://mailmind-ai-frontend.vercel.app,https://mailmind-ai-frontend-abhay-ms-projects.vercel.app` |
 | `TOKEN_ENCRYPTION_KEY` | Fernet key from `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | From Google Cloud Console |
 | `GROQ_API_KEY` | Groq key |
+| `OPENROUTER_API_KEY` | Optional; needed if users pick OpenRouter models |
 
-4. After deploy, copy the backend URL into Vercel `VITE_API_BASE_URL` and redeploy the frontend.
+4. Confirm health: `GET https://YOUR-API-HOST/api/v1/health/ready` → `database` and `redis` ok.
+
+## 2. Frontend on Vercel
+
+```powershell
+cd mailmind-ai-frontend
+vercel link          # first time
+vercel env add VITE_API_BASE_URL production
+# value: https://YOUR-API-HOST/api/v1
+vercel --prod
+```
+
+| Variable | Value |
+|----------|--------|
+| `VITE_API_BASE_URL` | `https://YOUR-API-HOST/api/v1` |
+
+`vercel.json` is SPA-only (no `/api` rewrite). The browser calls Render directly with
+`credentials: "include"`.
 
 ## 2b. Use Supabase for Postgres
 
-Supabase is a good fit for the database layer only. Keep the FastAPI backend, Redis,
-Google OAuth, and Gmail sync jobs exactly as they are.
-
 1. Create a Supabase project.
-2. In Supabase, open the Postgres connection details and copy the **direct** connection string.
-3. Set backend `DATABASE_URL` to that value, using the async SQLAlchemy form:
+2. Prefer the **Session pooler** (IPv4-friendly from Render):
 
 ```txt
-postgresql+asyncpg://postgres.<project-ref>:<password>@db.<project-ref>.supabase.co:5432/postgres?ssl=require
+postgresql+asyncpg://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?ssl=require
 ```
 
-4. Keep `REDIS_URL` pointed at Redis (Render/Upstash/local).
-5. Run migrations against Supabase:
+Example region: `ap-northeast-1` → `aws-0-ap-northeast-1.pooler.supabase.com`
 
-```powershell
-cd mailmind-ai-backend
-alembic upgrade head
-```
+3. Set that as Render `DATABASE_URL`. Redis stays on Render (Blueprint keyvalue service).
+4. Migrations run automatically via the backend entrypoint on deploy.
 
-Notes:
-
-- Prefer the direct database host for migrations and app traffic.
-- If Supabase gives you a `postgresql://...` URL, this backend will normalize it to
-  `postgresql+asyncpg://...` automatically.
-- Do **not** switch this app to Supabase Auth unless you intend to refactor the current
-  backend-managed Google login/session flow.
+Do **not** switch this app to Supabase Auth unless you refactor the current backend-managed
+Google login/session flow.
 
 ## 3. Google OAuth Console
 
 Authorized JavaScript origins:
 
-- `https://your-app.vercel.app`
+- `https://mailmind-ai-frontend.vercel.app`
+- `https://mailmind-ai-frontend-abhay-ms-projects.vercel.app` (optional preview)
+- `http://localhost:5173` (local)
 
 Authorized redirect URIs:
 
-- `https://YOUR-API-HOST/api/v1/auth/google/callback`
+- `https://YOUR-API-HOST/api/v1/auth/google/callback`  ← production (Render)
+- `http://localhost:8000/api/v1/auth/google/callback`  ← local
+- `http://127.0.0.1:8000/api/v1/auth/google/callback`  ← local
+
+OAuth consent screen → **Test users** → add the Gmail accounts you use.
+
+Helper: `.\scripts\fix-google-oauth.ps1` (reads local `.env` / compose; also prints Vercel + local URIs).
 
 ## Local vs production cookies
 
-Production uses `SameSite=None; Secure` refresh cookies so the Vercel origin can call the API with `credentials: "include"`.
+Production (`APP_ENV=production`) uses `SameSite=None; Secure` refresh cookies so the Vercel
+origin can call the Render API with `credentials: "include"`.
+
+## Local development
+
+```powershell
+.\scripts\start-dev.ps1
+# Frontend http://localhost:5173  → Vite proxies /api → http://localhost:8000
+```
+
+Leave `VITE_API_BASE_URL` unset locally so the app uses `/api/v1` via the Vite proxy.

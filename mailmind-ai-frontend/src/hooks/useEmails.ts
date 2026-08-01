@@ -6,7 +6,7 @@ import { apiRequest } from "@/lib/api";
 import { resolveInboxView } from "@/lib/inboxViews";
 import { useInboxStore } from "@/stores/inboxStore";
 import type { EmailCategoryFilter, InboxViewFilter } from "@/stores/inboxStore";
-import type { EmailDetail, EmailListResponse, SyncInboxResponse, SyncStatusResponse } from "@/types/email";
+import type { EmailDetail, EmailListItem, EmailListResponse, SyncInboxResponse, SyncStatusResponse } from "@/types/email";
 
 export interface InboxQueryParams {
   page?: number;
@@ -18,6 +18,34 @@ export interface InboxQueryParams {
   search?: string;
   sort_by?: "received_at" | "subject" | "sender";
   sort_order?: "asc" | "desc";
+}
+
+interface AiSearchResponse {
+  natural_query: string;
+  gmail_query: string;
+  explanation: string;
+  model_used: string | null;
+  results: EmailListItem[];
+  total: number;
+}
+
+/** Prefer AI/Gmail search for natural phrases; keep DB substring for short keywords / operators. */
+export function looksLikeNaturalLanguageSearch(query: string): boolean {
+  const trimmed = query.trim();
+  if (trimmed.length < 3) return false;
+  // Gmail operators (from:, subject:, is:, newer_than:, etc.)
+  if (/^[a-z_]+:\S+/i.test(trimmed) || /\s[a-z_]+:\S+/i.test(trimmed)) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length >= 3) return true;
+  if (
+    words.length >= 2 &&
+    /\b(from|about|regarding|emails?|messages?|last|week|month|today|yesterday|who|what|when|find|show|unread|important)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export async function fetchInbox(params: InboxQueryParams = {}): Promise<EmailListResponse> {
@@ -34,6 +62,52 @@ export async function fetchInbox(params: InboxQueryParams = {}): Promise<EmailLi
 
   const qs = query.toString();
   return apiRequest<EmailListResponse>(`/inbox${qs ? `?${qs}` : ""}`);
+}
+
+async function fetchAiSearchInbox(params: InboxQueryParams): Promise<EmailListResponse> {
+  const search = params.search?.trim() ?? "";
+  const pageSize = params.page_size ?? 50;
+  const response = await apiRequest<AiSearchResponse>("/search", {
+    method: "POST",
+    body: JSON.stringify({
+      query: search,
+      max_results: Math.min(Math.max(pageSize, 1), 100),
+    }),
+  });
+
+  let items = response.results;
+  if (params.category) {
+    items = items.filter((item) => item.category === params.category);
+  }
+  if (params.is_read !== undefined) {
+    items = items.filter((item) => item.is_read === params.is_read);
+  }
+  if (params.is_important !== undefined) {
+    items = items.filter((item) => item.is_important === params.is_important);
+  }
+  if (params.has_summary !== undefined) {
+    items = items.filter((item) => Boolean(item.summary_text) === params.has_summary);
+  }
+
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    page_size: pageSize,
+    has_more: false,
+  };
+}
+
+export async function fetchInboxWithSearch(params: InboxQueryParams = {}): Promise<EmailListResponse> {
+  const search = params.search?.trim();
+  if (search && looksLikeNaturalLanguageSearch(search)) {
+    try {
+      return await fetchAiSearchInbox(params);
+    } catch {
+      return fetchInbox(params);
+    }
+  }
+  return fetchInbox(params);
 }
 
 export async function fetchEmail(emailId: string): Promise<EmailDetail> {
@@ -102,7 +176,7 @@ export function useInbox(options?: { enabled?: boolean }) {
 
   return useQuery({
     queryKey: ["inbox", view, params],
-    queryFn: () => fetchInbox(params),
+    queryFn: () => fetchInboxWithSearch(params),
     placeholderData: keepPreviousData,
     enabled,
     refetchInterval: 15_000,

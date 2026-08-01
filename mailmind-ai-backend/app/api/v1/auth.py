@@ -45,16 +45,16 @@ def _resolve_oauth_context(
 ) -> tuple[str, str]:
     """Return (redirect_uri, frontend_url) for the current sign-in request.
 
-    Production / public SPA (Vercel): stable BACKEND_PUBLIC_URL callback +
-    FRONTEND_URL (or a CORS-listed origin).
+    Google always returns to the API host (`BACKEND_PUBLIC_URL` callback). The SPA
+    (Vercel or localhost) is only used as `frontend_url` after exchange.
 
     Local LAN phones: callback must hit the same private host as the SPA
     (Vite proxies /api), because localhost on the phone is not this PC.
     """
     default_frontend = settings.FRONTEND_URL.rstrip("/")
+    redirect_uri = settings.google_oauth_redirect_uri
 
     if settings.is_production:
-        redirect_uri = settings.google_oauth_redirect_uri
         if origin:
             try:
                 normalized = normalize_origin(origin)
@@ -132,12 +132,13 @@ async def google_oauth_config(
     if settings.is_production:
         raise AppError("Not found", status_code=404)
 
+    prefix = settings.API_V1_PREFIX.rstrip("/")
     frontend_port = urlparse(settings.FRONTEND_URL).port or 5173
     required = list_dev_redirect_uris(
         frontend_port=frontend_port,
         backend_port=settings.PORT,
     )
-    # Always include the live configured callback (Vercel / tunnel / custom).
+    # Always include the configured API-host callback (local or Render).
     live_callback = settings.google_oauth_redirect_uri
     if live_callback not in required:
         required.insert(0, live_callback)
@@ -151,24 +152,28 @@ async def google_oauth_config(
             authorized.append(cors_origin)
 
     candidate = origin or request.headers.get("origin")
+    active_redirect, active_frontend = _resolve_oauth_context(settings, origin=candidate)
     if candidate:
         try:
             normalized = normalize_origin(candidate)
             if normalized not in authorized:
                 authorized.append(normalized)
+            # LAN phones use Vite-proxied callback on the private SPA host.
             if is_allowed_dev_origin(candidate) and is_private_lan_origin(normalized):
-                lan_callback = (
-                    f"{normalized}{settings.API_V1_PREFIX.rstrip('/')}/auth/google/callback"
-                )
+                lan_callback = f"{normalized}{prefix}/auth/google/callback"
                 if lan_callback not in required:
                     required.append(lan_callback)
         except ValueError:
             pass
 
+    if active_redirect in required:
+        required.remove(active_redirect)
+    required.insert(0, active_redirect)
+
     return GoogleOAuthConfigResponse(
-        redirect_uri=settings.google_oauth_redirect_uri,
+        redirect_uri=active_redirect,
         backend_public_url=settings.BACKEND_PUBLIC_URL,
-        frontend_callback_url=f"{settings.FRONTEND_URL.rstrip('/')}/auth/callback",
+        frontend_callback_url=f"{active_frontend}/auth/callback",
         google_configured=bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET),
         required_redirect_uris=required,
         authorized_origins=authorized,

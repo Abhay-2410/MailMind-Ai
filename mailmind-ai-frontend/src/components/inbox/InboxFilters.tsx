@@ -49,7 +49,7 @@ export function InboxFilters() {
         <Input
           value={searchInput}
           onChange={(event) => setSearchInput(event.target.value)}
-          placeholder="Search subject, sender, or preview…"
+          placeholder="Search inbox… try “emails about invoices last week”"
           className="pl-9 pr-9"
         />
         {searchInput ? (
