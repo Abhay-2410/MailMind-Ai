@@ -48,7 +48,7 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: GROQ_ASSISTANT_MODEL
-        value: llama-3.1-8b-instant
+        value: openai/gpt-oss-20b
 
   - type: keyvalue
     name: mailmind-redis

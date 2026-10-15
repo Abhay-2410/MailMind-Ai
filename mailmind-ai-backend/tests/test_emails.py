@@ -249,3 +249,90 @@ async def test_get_email_returns_preview_when_gmail_fails(
 
     assert detail.body_text == "Snippet preview text"
     assert detail.subject == "Preview subject"
+
+
+async def _history_fixture(db_session: AsyncSession, suffix: str):
+    from app.models.email import Email
+
+    user = User(email=f"history-{suffix}@example.com", google_id=f"g-history-{suffix}", is_active=True)
+    db_session.add(user)
+    await db_session.flush()
+    account = Account(
+        user_id=user.id,
+        email=user.email,
+        access_token_encrypted=encrypt_token("token"),
+        is_primary=True,
+        is_active=True,
+        gmail_history_id="100",
+        last_synced_at=datetime.now(UTC),
+    )
+    db_session.add(account)
+    await db_session.flush()
+    db_session.add(
+        Email(
+            user_id=user.id,
+            account_id=account.id,
+            gmail_id="old",
+            sender="sender@example.com",
+            subject="Old",
+            received_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+    return user, account
+
+
+@pytest.mark.asyncio
+async def test_incremental_history_adds_new_and_drops_trashed(db_session: AsyncSession) -> None:
+    from sqlalchemy import select
+
+    from app.models.email import Email
+    from app.services.gmail_service import GmailHistoryChanges
+
+    user, account = await _history_fixture(db_session, "a")
+    service = GmailService()
+    new_message = service.parse_message(_sample_gmail_api_message("new"))
+    trashed = _sample_gmail_api_message("old")
+    trashed["labelIds"] = ["TRASH"]
+    trashed_message = service.parse_message(trashed)
+
+    mock_gmail = AsyncMock()
+    mock_gmail.list_history_changes = AsyncMock(
+        return_value=GmailHistoryChanges(
+            added_ids=["new"], deleted_ids=[], updated_ids=["old"], history_id="150", complete=True
+        )
+    )
+    mock_gmail.ensure_valid_access_token = AsyncMock(return_value="token")
+    mock_gmail.fetch_messages_batch = AsyncMock(return_value=[new_message, trashed_message])
+
+    result, _ = await EmailService(gmail_service=mock_gmail).sync_inbox(db_session, user, incremental=True)
+
+    assert result.new_count == 1
+    stored = set(
+        (await db_session.execute(select(Email.gmail_id).where(Email.account_id == account.id))).scalars()
+    )
+    assert stored == {"new"}
+    assert account.gmail_history_id == "150"
+
+
+@pytest.mark.asyncio
+async def test_incremental_truncated_history_falls_back_to_full_window(db_session: AsyncSession) -> None:
+    from app.services.gmail_service import GmailHistoryChanges
+
+    user, account = await _history_fixture(db_session, "b")
+    mock_gmail = AsyncMock()
+    mock_gmail.list_history_changes = AsyncMock(
+        return_value=GmailHistoryChanges(
+            added_ids=["x"], deleted_ids=[], updated_ids=[], history_id="150", complete=False
+        )
+    )
+    mock_gmail.get_history_id = AsyncMock(return_value="200")
+    mock_gmail.collect_query_message_ids = AsyncMock(return_value=[])
+    mock_gmail.ensure_valid_access_token = AsyncMock(return_value="token")
+    mock_gmail.fetch_messages_batch = AsyncMock(return_value=[])
+
+    await EmailService(gmail_service=mock_gmail).sync_inbox(db_session, user, incremental=True)
+
+    query = mock_gmail.collect_query_message_ids.await_args.kwargs["query"]
+    assert query.startswith("after:")
+    assert account.gmail_history_id == "200"

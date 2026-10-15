@@ -17,7 +17,7 @@ from app.utils.gmail_cleanup_helpers import CleanupCandidate, message_is_old_eno
 
 logger = logging.getLogger(__name__)
 
-GROQ_PRIMARY_MODEL = "llama-3.3-70b-versatile"
+GROQ_PRIMARY_MODEL = "openai/gpt-oss-120b"
 OPENROUTER_PRIMARY_MODEL = "anthropic/claude-sonnet-4-6"
 CONFIDENCE_THRESHOLD = 0.95
 PRIMARY_AGE_DAYS = 30

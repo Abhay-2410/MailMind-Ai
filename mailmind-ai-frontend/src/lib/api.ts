@@ -2,13 +2,21 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
 
+export const GMAIL_REAUTH_CODE = "gmail_reauth_required";
+
 export class ApiError extends Error {
   status: number;
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
+}
+
+export function isGmailReauthError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === GMAIL_REAUTH_CODE;
 }
 
 type SessionUpdater = (tokens: AuthTokens) => void;
@@ -38,7 +46,11 @@ function extractErrorMessage(body: unknown, fallback: string): string {
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new ApiError(extractErrorMessage(body, "Request failed"), response.status);
+    const code =
+      body && typeof body === "object" && typeof (body as { code?: unknown }).code === "string"
+        ? (body as { code: string }).code
+        : undefined;
+    throw new ApiError(extractErrorMessage(body, "Request failed"), response.status, code);
   }
   return response.json() as Promise<T>;
 }

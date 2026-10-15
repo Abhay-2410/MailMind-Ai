@@ -9,10 +9,12 @@ settings = get_settings()
 
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=settings.SQL_ECHO,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    # Many serverless instances can share one hosted Postgres; keep each pool small.
+    pool_size=3 if settings.is_serverless else 10,
+    max_overflow=5 if settings.is_serverless else 20,
+    pool_recycle=300 if settings.is_serverless else -1,
 )
 
 AsyncSessionLocal = async_sessionmaker(

@@ -36,7 +36,7 @@ class UserSettings(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
 
     ai_provider: Mapped[str] = mapped_column(String(50), default="groq", nullable=False)
-    ai_model: Mapped[str] = mapped_column(String(100), default="llama-3.1-8b-instant", nullable=False)
+    ai_model: Mapped[str] = mapped_column(String(100), default="openai/gpt-oss-20b", nullable=False)
 
     theme: Mapped[ThemePreference] = mapped_column(
         Enum(

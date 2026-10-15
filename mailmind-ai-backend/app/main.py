@@ -8,6 +8,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.router import api_router
+from app.core.background import DrainBackgroundTasksMiddleware
 from app.core.config import get_settings, log_oauth_config
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
@@ -20,7 +21,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     log_oauth_config(settings)
     await init_redis(settings)
+    from app.api.v1.inbox import resume_interrupted_syncs
+    from app.services.background_sync import start_background_sync, stop_background_sync
+
+    # Serverless instances are short-lived: full syncs are driven by the client and
+    # incremental polling by Vercel Cron instead of an in-process loop.
+    if not settings.is_serverless:
+        await resume_interrupted_syncs()
+        start_background_sync()
     yield
+    await stop_background_sync()
     await close_redis()
 
 
@@ -57,6 +67,8 @@ def create_app() -> FastAPI:
         cors_kwargs["allow_origin_regex"] = DEV_CORS_ORIGIN_REGEX
 
     app.add_middleware(CORSMiddleware, **cors_kwargs)
+    if settings.is_serverless:
+        app.add_middleware(DrainBackgroundTasksMiddleware)
 
     @app.get("/", tags=["root"])
     async def root() -> dict[str, str]:

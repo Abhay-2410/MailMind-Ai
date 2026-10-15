@@ -1,70 +1,43 @@
 # Start MailMind backend + frontend (Docker-first infra + backend, Vite for UI)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$composeFile = Join-Path $root "docker-compose.yml"
+. (Join-Path $PSScriptRoot "common.ps1")
+$composeFile = $MailMindComposeFile
 
 Write-Host "Launching MailMind AI dev servers..." -ForegroundColor Cyan
 
-function Wait-ComposeHealthy {
-  param([string]$Service, [int]$TimeoutSec = 60)
-  $deadline = (Get-Date).AddSeconds($TimeoutSec)
-  do {
-    $json = docker compose -f $composeFile ps --format json $Service 2>$null
-    if ($json) {
-      try {
-        $row = $json | ConvertFrom-Json
-        $health = $row.Health
-        $state = $row.State
-        if ($health -eq "healthy" -or ($state -eq "running" -and -not $health)) {
-          return $true
-        }
-      } catch { }
-    }
-    Start-Sleep -Seconds 2
-  } while ((Get-Date) -lt $deadline)
-  return $false
-}
+if (Test-DockerAvailable) {
+  $conflicts = @(Get-ForeignPortContainers)
+  if ($conflicts.Count -gt 0) {
+    Write-Host "Ports needed by MailMind are held by containers from another project:" -ForegroundColor Red
+    $conflicts | ForEach-Object { Write-Host "  $($_.Name) (project '$($_.Project)') on :$($_.Port)" -ForegroundColor Red }
+    $names = ($conflicts | Select-Object -ExpandProperty Name -Unique) -join " "
+    Write-Host "Stop them first (data is kept):  docker stop $names" -ForegroundColor Yellow
+    exit 1
+  }
 
-if (Get-Command docker -ErrorAction SilentlyContinue) {
-  try {
-    docker info 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-      Write-Host "Starting postgres + redis + backend via Docker Compose..." -ForegroundColor Cyan
-      docker compose -f $composeFile up -d --build postgres redis backend
-      if ($LASTEXITCODE -eq 0) {
-        $null = Wait-ComposeHealthy -Service postgres -TimeoutSec 45
-        $null = Wait-ComposeHealthy -Service redis -TimeoutSec 45
-        Write-Host "Waiting for API readiness..." -ForegroundColor Cyan
-        $deadline = (Get-Date).AddSeconds(120)
-        $ready = $false
-        do {
-          try {
-            $r = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v1/health/ready" -TimeoutSec 3 -UseBasicParsing
-            if ($r.StatusCode -eq 200) { $ready = $true; break }
-          } catch { }
-          Start-Sleep -Seconds 2
-        } while ((Get-Date) -lt $deadline)
-        if (-not $ready) {
-          Write-Host "Backend not ready yet — check docker compose logs backend" -ForegroundColor Yellow
-        }
-      }
-    } else {
-      Write-Host "Docker daemon not running — start Docker Desktop, or run .\start-backend.ps1 for local fallback." -ForegroundColor Yellow
-    }
-  } catch {
-    Write-Host "Docker unavailable — ensure PostgreSQL and Redis are running locally." -ForegroundColor Yellow
+  Write-Host "Starting postgres + redis + backend via Docker Compose..." -ForegroundColor Cyan
+  $null = Stop-RepoDevProcesses -Kind uvicorn
+  docker compose -f $composeFile up -d --build postgres redis backend
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "docker compose up failed - check the output above." -ForegroundColor Red
+    exit 1
+  }
+  Write-Host "Waiting for API readiness..." -ForegroundColor Cyan
+  if (-not (Wait-BackendReady -Port 8000 -TimeoutSec 120)) {
+    Write-Host "Backend not ready yet - check: docker compose logs backend" -ForegroundColor Yellow
   }
 } else {
-  Write-Host "Docker not found — ensure PostgreSQL and Redis are running locally." -ForegroundColor Yellow
+  Write-Host "Docker not available - starting backend with local venv fallback (needs local PostgreSQL + Redis)." -ForegroundColor Yellow
   Start-Process powershell -ArgumentList @(
-    "-NoExit", "-Command",
+    "-NoExit", "-ExecutionPolicy", "Bypass", "-Command",
     "Set-Location '$root'; .\start-backend.ps1"
   ) -WindowStyle Normal
   Start-Sleep -Seconds 2
 }
 
 Start-Process powershell -ArgumentList @(
-  "-NoExit", "-Command",
+  "-NoExit", "-ExecutionPolicy", "Bypass", "-Command",
   "Set-Location '$root'; .\start-frontend.ps1"
 ) -WindowStyle Normal
 

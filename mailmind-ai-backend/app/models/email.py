@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -46,6 +46,15 @@ class Email(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_starred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_important: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     labels: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Classification signals parsed from headers (see GmailService.parse_message).
+    recipients: Mapped[str | None] = mapped_column(Text, nullable=True)
+    list_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_bulk: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_automated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    priority_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
+    # Rows below SIGNALS_VERSION are re-fetched from Gmail on the next full sync.
+    signals_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     account: Mapped["Account"] = relationship(back_populates="emails")
     summary: Mapped["Summary | None"] = relationship(

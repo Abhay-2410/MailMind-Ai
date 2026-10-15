@@ -46,7 +46,7 @@ export function EmailListItem({ email }: EmailListItemProps) {
               {email.is_starred ? (
                 <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" />
               ) : null}
-              {email.is_important ? (
+              {email.is_priority ? (
                 <Badge className="hidden border-0 bg-brand-green-soft px-2 py-0 text-[10px] text-brand-green sm:inline-flex">
                   Important
                 </Badge>
@@ -69,6 +69,7 @@ export function EmailListItem({ email }: EmailListItemProps) {
           {categoryLabel ? (
             <Badge
               variant="outline"
+              title={email.category_reason ?? undefined}
               className={cn(
                 "hidden shrink-0 capitalize sm:inline-flex",
                 CATEGORY_BADGE_STYLES[email.category ?? ""] ?? "bg-accent text-brand-text",

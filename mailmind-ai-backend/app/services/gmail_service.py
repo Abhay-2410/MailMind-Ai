@@ -1,13 +1,16 @@
 ﻿import asyncio
 import base64
+import hashlib
 import json
 import logging
+import random
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 from typing import Any, ClassVar, Literal
 from uuid import UUID
 
@@ -15,7 +18,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.exceptions import AppError
+from app.core.exceptions import AppError, GmailReauthRequired
 from app.models.account import Account
 from app.utils.encryption import decrypt_token, encrypt_token
 
@@ -24,11 +27,102 @@ logger = logging.getLogger(__name__)
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 GMAIL_BATCH_URL = "https://www.googleapis.com/batch/gmail/v1"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-METADATA_HEADERS = ["From", "Subject", "Date"]
-HTTP_BATCH_SIZE = 100
-BATCH_CONCURRENCY = 16
+# Bump when METADATA_HEADERS / parse_message gain fields so stored rows get re-fetched.
+SIGNALS_VERSION = 1
+METADATA_HEADERS = [
+    "From",
+    "Subject",
+    "Date",
+    "To",
+    "Cc",
+    "List-Unsubscribe",
+    "List-Id",
+    "Precedence",
+    "Auto-Submitted",
+]
+BULK_PRECEDENCE = {"bulk", "list", "junk"}
+AUTOMATED_LOCAL_PART = re.compile(
+    r"^(no-?reply|do-?not-?reply|notifications?|alerts?|mailer-daemon|postmaster|bounces?|automated|system)\b",
+    re.IGNORECASE,
+)
+# Gmail enforces a per-user quota (~250 units/s; messages.get = 5 units) and recommends
+# HTTP batches of <= 50 sub-requests; larger bursts come back as 403/429 rate limits.
+HTTP_BATCH_SIZE = 50
+BATCH_CONCURRENCY = 2
 DELETE_BATCH_CONCURRENCY = 8
-FALLBACK_CONCURRENCY = 48
+FALLBACK_CONCURRENCY = 10
+GMAIL_MAX_RETRIES = 5
+GMAIL_RETRY_BASE_SECONDS = 1.0
+GMAIL_RETRY_MAX_SECONDS = 32.0
+# Gmail reports per-user throttling as 403 with these reasons, not only as 429.
+RATE_LIMIT_REASONS = frozenset({"ratelimitexceeded", "userratelimitexceeded"})
+DAILY_QUOTA_REASONS = frozenset({"dailylimitexceeded", "quotaexceeded"})
+API_DISABLED_REASONS = frozenset({"accessnotconfigured", "service_disabled"})
+RATE_LIMITED_MESSAGE = "Gmail is rate limiting requests — wait a minute and retry"
+PERMISSION_MESSAGE = "Gmail permission missing — sign out and sign in with Google again"
+TOKEN_REJECTED_CODE = "gmail_token_rejected"
+TOKEN_REFRESH_TIMEOUT_SECONDS = 20.0
+# Upper bound on waiting for another request's token refresh; prevents pile-ups.
+TOKEN_LOCK_TIMEOUT_SECONDS = 30.0
+# Quota units per https://developers.google.com/gmail/api/reference/quota
+QUOTA_RATE_UNITS_PER_SECOND = 200.0
+QUOTA_BURST_UNITS = 250.0
+_QUOTA_COSTS: list[tuple[str, re.Pattern[str], int]] = [
+    ("POST", re.compile(r"^messages/batch(Delete|Modify)$"), 50),
+    ("POST", re.compile(r"^watch$"), 100),
+    ("GET", re.compile(r"^threads/[^/]+$"), 10),
+    ("GET", re.compile(r"^history$"), 2),
+    ("GET", re.compile(r"^(profile|labels(/[^/]+)?)$"), 1),
+]
+DEFAULT_QUOTA_COST = 5
+
+
+def gmail_quota_cost(method: str, path: str) -> int:
+    normalized = path.strip("/")
+    for cost_method, pattern, cost in _QUOTA_COSTS:
+        if method.upper() == cost_method and pattern.match(normalized):
+            return cost
+    return DEFAULT_QUOTA_COST
+
+
+class GmailQuotaLimiter:
+    """Per-user token bucket so sync, cleanup and triage share Gmail's per-user quota.
+
+    In-process only: with several backend instances each gets its own bucket.
+    """
+
+    def __init__(
+        self,
+        rate: float = QUOTA_RATE_UNITS_PER_SECOND,
+        burst: float = QUOTA_BURST_UNITS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.rate = rate
+        self.burst = burst
+        self._clock = clock
+        self._state: dict[str, tuple[float, float]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    @staticmethod
+    def key_for_token(access_token: str) -> str:
+        return hashlib.sha256(access_token.encode()).hexdigest()[:24]
+
+    async def acquire(self, key: str, units: float) -> None:
+        units = min(units, self.burst)
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            while True:
+                now = self._clock()
+                tokens, updated = self._state.get(key, (self.burst, now))
+                tokens = min(self.burst, tokens + (now - updated) * self.rate)
+                if tokens >= units:
+                    self._state[key] = (tokens - units, now)
+                    return
+                self._state[key] = (tokens, now)
+                await asyncio.sleep((units - tokens) / self.rate)
+
+
+gmail_quota_limiter = GmailQuotaLimiter()
 
 
 @dataclass
@@ -46,6 +140,10 @@ class GmailMessage:
     is_starred: bool
     is_important: bool
     labels: list[str]
+    recipients: list[str] = field(default_factory=list)
+    list_id: str | None = None
+    is_bulk: bool = False
+    is_automated: bool = False
 
 
 @dataclass
@@ -54,6 +152,8 @@ class GmailHistoryChanges:
     deleted_ids: list[str]
     updated_ids: list[str]
     history_id: str | None
+    # False when max_pages was reached before Gmail ran out of history pages.
+    complete: bool = True
 
 
 @dataclass
@@ -64,6 +164,8 @@ class GmailListResult:
 
 class GmailService:
     _refresh_locks: ClassVar[dict[UUID, asyncio.Lock]] = {}
+    # Hashes of access tokens Google answered 401 for; they must not be reused until expiry.
+    _rejected_tokens: ClassVar[set[str]] = set()
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -75,6 +177,16 @@ class GmailService:
             self._refresh_locks[account_id] = lock
         return lock
 
+    @classmethod
+    def _mark_token_rejected(cls, access_token: str) -> None:
+        if len(cls._rejected_tokens) > 1000:
+            cls._rejected_tokens.clear()
+        cls._rejected_tokens.add(gmail_quota_limiter.key_for_token(access_token))
+
+    @classmethod
+    def _token_was_rejected(cls, access_token: str) -> bool:
+        return gmail_quota_limiter.key_for_token(access_token) in cls._rejected_tokens
+
     @staticmethod
     def _token_is_fresh(account: Account, now: datetime) -> bool:
         expires_at = account.token_expires_at
@@ -85,7 +197,7 @@ class GmailService:
         return expires_at > now + timedelta(minutes=2)
 
     async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=TOKEN_REFRESH_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 GOOGLE_TOKEN_URL,
                 data={
@@ -103,11 +215,8 @@ class GmailService:
                 body[:500],
             )
             if "invalid_grant" in body.lower():
-                raise AppError(
-                    "Gmail session expired. Sign out and sign in with Google again.",
-                    status_code=401,
-                )
-            raise AppError("Failed to refresh Gmail access token", status_code=401)
+                raise GmailReauthRequired()
+            raise AppError("Failed to refresh Gmail access token — try again", status_code=502)
         return response.json()
 
     async def _persist_refreshed_token(
@@ -118,7 +227,7 @@ class GmailService:
     ) -> str:
         access_token = token_data.get("access_token")
         if not access_token:
-            raise AppError("Gmail token refresh did not return an access token", status_code=401)
+            raise AppError("Gmail token refresh did not return an access token", status_code=502)
 
         now = datetime.now(UTC)
         account.access_token_encrypted = encrypt_token(access_token, settings=self.settings)
@@ -135,19 +244,16 @@ class GmailService:
 
     async def _refresh_account_token(self, account: Account, db: AsyncSession) -> str:
         if not account.refresh_token_encrypted:
-            raise AppError(
-                "Gmail session expired. Sign out and sign in with Google again.",
-                status_code=401,
-            )
+            raise GmailReauthRequired()
 
         refresh_token = decrypt_token(account.refresh_token_encrypted, settings=self.settings)
         try:
             token_data = await self.refresh_access_token(refresh_token)
-        except AppError as exc:
-            if "Sign out" in exc.message:
-                account.refresh_token_encrypted = None
-                account.token_expires_at = datetime(1970, 1, 1, tzinfo=UTC)
-                await db.commit()
+        except GmailReauthRequired:
+            # Drop the dead grant so later calls fail fast instead of re-asking Google.
+            account.refresh_token_encrypted = None
+            account.token_expires_at = datetime(1970, 1, 1, tzinfo=UTC)
+            await db.commit()
             raise
 
         return await self._persist_refreshed_token(account, db, token_data)
@@ -177,16 +283,37 @@ class GmailService:
         db: AsyncSession,
         *,
         force_refresh: bool = False,
+        rejected_token: str | None = None,
     ) -> str:
+        """Return a usable access token, refreshing it when expired or rejected.
+
+        ``rejected_token`` lets concurrent callers that all saw the same 401 share one
+        refresh: whoever gets the lock second finds a different token and reuses it.
+        """
         now = datetime.now(UTC)
         if not force_refresh and self._token_is_fresh(account, now):
-            return decrypt_token(account.access_token_encrypted, settings=self.settings)
+            current = decrypt_token(account.access_token_encrypted, settings=self.settings)
+            if not self._token_was_rejected(current):
+                return current
 
-        async with self._account_lock(account.id):
+        lock = self._account_lock(account.id)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=TOKEN_LOCK_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            raise AppError("Gmail token refresh is taking too long — try again", status_code=503) from exc
+        try:
             await db.refresh(account)
-            if not force_refresh and self._token_is_fresh(account, now):
-                return decrypt_token(account.access_token_encrypted, settings=self.settings)
+            current = decrypt_token(account.access_token_encrypted, settings=self.settings)
+            replaced = rejected_token is not None and current != rejected_token
+            if (
+                (not force_refresh or replaced)
+                and self._token_is_fresh(account, now)
+                and not self._token_was_rejected(current)
+            ):
+                return current
             return await self._refresh_account_token(account, db)
+        finally:
+            lock.release()
 
     async def request_json(
         self,
@@ -196,6 +323,7 @@ class GmailService:
         db: AsyncSession,
         *,
         params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> dict[str, Any]:
         """Gmail API request with automatic token refresh on 401."""
@@ -206,23 +334,28 @@ class GmailService:
                 path,
                 access_token,
                 params=params,
+                json_body=json_body,
                 client=client,
             )
         except AppError as exc:
-            if exc.status_code != 401:
+            if exc.code != TOKEN_REJECTED_CODE:
                 raise
-            async with self._account_lock(account.id):
-                await db.refresh(account)
-                access_token = await self.ensure_valid_access_token(
-                    account, db, force_refresh=True
-                )
+        access_token = await self.ensure_valid_access_token(
+            account, db, force_refresh=True, rejected_token=access_token
+        )
+        try:
             return await self._request(
                 method,
                 path,
                 access_token,
                 params=params,
+                json_body=json_body,
                 client=client,
             )
+        except AppError as exc:
+            if exc.code == TOKEN_REJECTED_CODE:
+                raise GmailReauthRequired() from exc
+            raise
 
     async def ensure_access_token_for_delete(
         self,
@@ -241,41 +374,132 @@ class GmailService:
         access_token: str,
         *,
         params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> dict[str, Any]:
         url = f"{GMAIL_API_BASE}/{path.lstrip('/')}"
         headers = {"Authorization": f"Bearer {access_token}"}
+        quota_key = gmail_quota_limiter.key_for_token(access_token)
+        quota_cost = gmail_quota_cost(method, path)
+
+        async def send(http: httpx.AsyncClient) -> httpx.Response:
+            for attempt in range(GMAIL_MAX_RETRIES + 1):
+                await gmail_quota_limiter.acquire(quota_key, quota_cost)
+                try:
+                    response = await http.request(
+                        method, url, headers=headers, params=params, json=json_body
+                    )
+                except httpx.TransportError as exc:
+                    if attempt >= GMAIL_MAX_RETRIES:
+                        logger.error("Gmail API %s %s unreachable: %s", method, path, exc)
+                        raise AppError("Could not reach Gmail — try again", status_code=502) from exc
+                    await asyncio.sleep(self._retry_delay(attempt))
+                    continue
+                reasons = self._error_reasons(response)
+                if attempt < GMAIL_MAX_RETRIES and self._is_retryable(response.status_code, reasons):
+                    delay = self._retry_delay(attempt, response.headers.get("Retry-After"))
+                    logger.info(
+                        "Gmail API %s %s throttled (%s %s) — retrying in %.1fs",
+                        method,
+                        path,
+                        response.status_code,
+                        ",".join(sorted(reasons)) or "-",
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                return response
+            raise AssertionError("unreachable")
 
         if client is None:
             async with httpx.AsyncClient(timeout=30.0) as owned:
-                response = await owned.request(method, url, headers=headers, params=params)
+                response = await send(owned)
         else:
-            response = await client.request(method, url, headers=headers, params=params)
+            response = await send(client)
 
         if response.status_code == 401:
-            raise AppError(
-                "Gmail session expired. Sign out and sign in with Google again.",
-                status_code=401,
-            )
-        if response.status_code == 403:
-            raise AppError("Permission error — please re-login", status_code=403)
-        if response.status_code == 404:
-            detail = self._gmail_error_detail(response)
-            raise AppError(detail or "Gmail resource not found", status_code=404)
-        if response.status_code == 429:
-            raise AppError("Rate limited — wait 30s and retry", status_code=429)
-        if response.status_code != 200:
-            detail = self._gmail_error_detail(response)
-            logger.error(
-                "Gmail API %s %s failed (%s): %s",
-                method,
-                path,
-                response.status_code,
-                detail,
-            )
-            raise AppError(detail, status_code=502)
-
+            self._mark_token_rejected(access_token)
+        self._raise_for_gmail_status(response, method=method, path=path)
         return response.json()
+
+    @staticmethod
+    def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
+        if retry_after:
+            try:
+                return min(max(float(retry_after), 0.5), GMAIL_RETRY_MAX_SECONDS)
+            except ValueError:
+                pass
+        backoff = GMAIL_RETRY_BASE_SECONDS * (2**attempt)
+        return min(backoff + random.uniform(0, 1), GMAIL_RETRY_MAX_SECONDS)
+
+    @staticmethod
+    def _reasons_from_payload(payload: Any) -> set[str]:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if not isinstance(error, dict):
+            return set()
+        reasons: set[str] = set()
+        for item in (error.get("errors") or []) + (error.get("details") or []):
+            if isinstance(item, dict) and item.get("reason"):
+                reasons.add(str(item["reason"]).lower())
+        return reasons
+
+    @classmethod
+    def _error_reasons(cls, response: httpx.Response) -> set[str]:
+        if response.status_code < 400:
+            return set()
+        try:
+            return cls._reasons_from_payload(response.json())
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return set()
+
+    @staticmethod
+    def _is_retryable(status_code: int, reasons: set[str]) -> bool:
+        if status_code == 429 or status_code >= 500:
+            return True
+        return status_code == 403 and bool(reasons & RATE_LIMIT_REASONS)
+
+    def _raise_for_gmail_status(
+        self,
+        response: httpx.Response,
+        *,
+        method: str,
+        path: str,
+    ) -> None:
+        status_code = response.status_code
+        if status_code in (200, 204):
+            return
+        if status_code == 401:
+            raise AppError(
+                "Gmail rejected the access token — retry to use a refreshed token",
+                status_code=502,
+                code=TOKEN_REJECTED_CODE,
+            )
+
+        reasons = self._error_reasons(response)
+        detail = self._gmail_error_detail(response)
+        if status_code == 404:
+            raise AppError(detail or "Gmail resource not found", status_code=404)
+
+        logger.error(
+            "Gmail API %s %s failed (%s, reasons=%s): %s",
+            method,
+            path,
+            status_code,
+            ",".join(sorted(reasons)) or "-",
+            detail,
+        )
+        if status_code == 429 or reasons & RATE_LIMIT_REASONS:
+            raise AppError(RATE_LIMITED_MESSAGE, status_code=429)
+        if reasons & DAILY_QUOTA_REASONS:
+            raise AppError("Gmail daily API quota exhausted — try again later", status_code=429)
+        if reasons & API_DISABLED_REASONS:
+            raise AppError(
+                "Gmail API is not enabled for this Google Cloud project",
+                status_code=503,
+            )
+        if status_code == 403:
+            raise AppError(PERMISSION_MESSAGE, status_code=403)
+        raise AppError(detail, status_code=502)
 
     @staticmethod
     def _gmail_error_detail(response: httpx.Response) -> str:
@@ -342,13 +566,29 @@ class GmailService:
         history_id = profile.get("historyId")
         return str(history_id) if history_id is not None else None
 
+    async def get_syncable_message_total(self, *, account: Account, db: AsyncSession) -> int:
+        """Messages a full sync should store. profile.messagesTotal already excludes
+        spam and trash (it equals what messages.list returns by default)."""
+        profile = await self.get_profile(account=account, db=db)
+        return int(profile.get("messagesTotal") or 0)
+
+    async def start_watch(self, *, account: Account, db: AsyncSession, topic_name: str) -> dict[str, Any]:
+        """Subscribe the mailbox to Pub/Sub push notifications (expires after ~7 days)."""
+        return await self.request_json(
+            "POST",
+            "watch",
+            account,
+            db,
+            json_body={"topicName": topic_name, "labelFilterBehavior": "exclude", "labelIds": ["SPAM"]},
+        )
+
     async def list_history_changes(
         self,
         *,
         account: Account,
         db: AsyncSession,
         start_history_id: str,
-        max_pages: int = 20,
+        max_pages: int = 200,
     ) -> GmailHistoryChanges:
         """Return mailbox changes since start_history_id (Gmail History API)."""
         added: set[str] = set()
@@ -407,6 +647,7 @@ class GmailService:
             deleted_ids=list(deleted),
             updated_ids=list(updated),
             history_id=latest_history_id,
+            complete=not page_token,
         )
 
     async def collect_query_message_ids(
@@ -456,15 +697,31 @@ class GmailService:
         async with httpx.AsyncClient(timeout=300.0) as client:
             for start in range(0, len(all_ids), chunk_size):
                 chunk = all_ids[start : start + chunk_size]
-                response = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"ids": chunk},
-                )
-                if response.status_code == 403:
+                for attempt in range(GMAIL_MAX_RETRIES + 1):
+                    await gmail_quota_limiter.acquire(
+                        gmail_quota_limiter.key_for_token(access_token),
+                        gmail_quota_cost("POST", "messages/batchDelete"),
+                    )
+                    response = await client.post(
+                        url,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"ids": chunk},
+                    )
+                    reasons = self._error_reasons(response)
+                    if attempt < GMAIL_MAX_RETRIES and self._is_retryable(
+                        response.status_code, reasons
+                    ):
+                        await asyncio.sleep(
+                            self._retry_delay(attempt, response.headers.get("Retry-After"))
+                        )
+                        continue
+                    break
+                if response.status_code == 403 and not (
+                    reasons & (RATE_LIMIT_REASONS | DAILY_QUOTA_REASONS | API_DISABLED_REASONS)
+                ):
                     detail = self._gmail_error_detail(response)
                     logger.error("Gmail batchDelete forbidden: %s", detail)
                     raise AppError(
@@ -472,13 +729,9 @@ class GmailService:
                         "Sign out, sign in with Google again, and allow full Gmail access.",
                         status_code=403,
                     )
-                if response.status_code == 429:
-                    raise AppError("Rate limited — wait 30s and retry", status_code=429)
-                if response.status_code not in (200, 204):
-                    raise AppError(
-                        f"Gmail delete failed ({response.status_code})",
-                        status_code=502,
-                    )
+                self._raise_for_gmail_status(
+                    response, method="POST", path="messages/batchDelete"
+                )
 
                 deleted_ids.extend(chunk)
                 if on_chunk_deleted:
@@ -596,38 +849,78 @@ class GmailService:
         params = ["format=metadata", *[f"metadataHeaders={h}" for h in METADATA_HEADERS]]
         return "&".join(params)
 
-    def _parse_batch_response(self, raw: str) -> list[GmailMessage]:
+    def _parse_batch_response(
+        self,
+        raw: str,
+        message_ids: list[str],
+        boundary: str | None = None,
+    ) -> tuple[list[GmailMessage], list[str]]:
+        """Parse a batch response into messages plus the IDs whose sub-requests should be retried."""
         messages: list[GmailMessage] = []
+        retry_ids: list[str] = []
+        answered: set[int] = set()
         decoder = json.JSONDecoder()
+        parts = raw.split(f"--{boundary}") if boundary else re.split(r"--batch_[^\s-]+", raw)
 
-        for block in re.split(r"HTTP/1\.1 \d+ (?:OK|Not Found)", raw):
-            start = block.find("{")
-            if start == -1:
+        for part in parts:
+            status_match = re.search(r"HTTP/1\.1 (\d{3})", part)
+            if not status_match:
                 continue
-            try:
-                data, _ = decoder.raw_decode(block[start:])
-            except json.JSONDecodeError:
+            status_code = int(status_match.group(1))
+            index_match = re.search(r"Content-ID:\s*<response-item-(\d+)>", part, re.IGNORECASE)
+            index = int(index_match.group(1)) if index_match else None
+            if index is not None:
+                answered.add(index)
+
+            payload: Any = None
+            start = part.find("{", status_match.end())
+            if start != -1:
+                try:
+                    payload, _ = decoder.raw_decode(part[start:])
+                except json.JSONDecodeError:
+                    payload = None
+
+            if status_code == 200 and isinstance(payload, dict) and payload.get("id"):
+                messages.append(self.parse_message(payload))
+            elif status_code == 404:
                 continue
-            if data.get("id"):
-                messages.append(self.parse_message(data))
+            elif (
+                index is not None
+                and index < len(message_ids)
+                and self._is_retryable(status_code, self._reasons_from_payload(payload))
+            ):
+                retry_ids.append(message_ids[index])
+            else:
+                logger.warning(
+                    "Gmail batch item failed (%s): %s",
+                    status_code,
+                    self._reasons_from_payload(payload) or "-",
+                )
 
-        return messages
+        returned = {message.gmail_id for message in messages}
+        retry_ids.extend(
+            mid
+            for i, mid in enumerate(message_ids)
+            if i not in answered and mid not in returned and mid not in retry_ids
+        )
+        return messages, retry_ids
 
-    async def _fetch_metadata_http_batch(
+    async def _send_metadata_batch(
         self,
         client: httpx.AsyncClient,
         access_token: str,
         message_ids: list[str],
-    ) -> list[GmailMessage]:
+    ) -> tuple[list[GmailMessage], list[str], str | None]:
         boundary = f"batch_{uuid.uuid4().hex}"
         query = self._metadata_query()
         lines: list[str] = []
 
-        for message_id in message_ids:
+        for index, message_id in enumerate(message_ids):
             lines.extend(
                 [
                     f"--{boundary}",
                     "Content-Type: application/http",
+                    f"Content-ID: <item-{index}>",
                     "",
                     f"GET /gmail/v1/users/me/messages/{message_id}?{query}",
                     "",
@@ -635,19 +928,65 @@ class GmailService:
             )
         lines.append(f"--{boundary}--")
 
-        response = await client.post(
-            GMAIL_BATCH_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": f"multipart/mixed; boundary={boundary}",
-            },
-            content="\r\n".join(lines).encode(),
+        await gmail_quota_limiter.acquire(
+            gmail_quota_limiter.key_for_token(access_token),
+            DEFAULT_QUOTA_COST * len(message_ids),
         )
+        try:
+            response = await client.post(
+                GMAIL_BATCH_URL,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": f"multipart/mixed; boundary={boundary}",
+                },
+                content="\r\n".join(lines).encode(),
+            )
+        except httpx.TransportError as exc:
+            logger.info("Gmail batch request transport error, will retry: %s", exc)
+            return [], list(message_ids), None
 
         if response.status_code != 200:
+            if self._is_retryable(response.status_code, self._error_reasons(response)):
+                return [], list(message_ids), response.headers.get("Retry-After")
             raise AppError("Gmail batch API request failed", status_code=502)
 
-        return self._parse_batch_response(response.text)
+        boundary_match = re.search(
+            r"boundary=\"?([^\";\s]+)\"?", response.headers.get("content-type", "")
+        )
+        messages, retry_ids = self._parse_batch_response(
+            response.text,
+            message_ids,
+            boundary_match.group(1) if boundary_match else None,
+        )
+        return messages, retry_ids, None
+
+    async def _fetch_metadata_http_batch(
+        self,
+        client: httpx.AsyncClient,
+        access_token: str,
+        message_ids: list[str],
+    ) -> list[GmailMessage]:
+        messages: list[GmailMessage] = []
+        pending = list(message_ids)
+        for attempt in range(GMAIL_MAX_RETRIES + 1):
+            fetched, pending, retry_after = await self._send_metadata_batch(
+                client, access_token, pending
+            )
+            messages.extend(fetched)
+            if not pending:
+                return messages
+            if attempt < GMAIL_MAX_RETRIES:
+                delay = self._retry_delay(attempt, retry_after)
+                logger.info(
+                    "Gmail batch throttled — retrying %s messages in %.1fs",
+                    len(pending),
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        logger.warning("Gmail batch still throttled for %s messages; fetching individually", len(pending))
+        messages.extend(await self._fetch_metadata_parallel(client, access_token, pending))
+        return messages
 
     async def _fetch_metadata_parallel(
         self,
@@ -680,7 +1019,7 @@ class GmailService:
         *,
         message_format: Literal["full", "metadata"] = "metadata",
     ) -> list[GmailMessage]:
-        """Fetch many messages via Gmail HTTP batch API (100 per request)."""
+        """Fetch many messages via Gmail HTTP batch API (HTTP_BATCH_SIZE per request)."""
         if not message_ids:
             return []
 
@@ -761,7 +1100,23 @@ class GmailService:
         sender_raw = headers.get("from", "unknown@unknown.com")
         sender_name, sender_email = self._parse_sender(sender_raw)
         subject = headers.get("subject", "(No subject)")
-        received_at = self._parse_date(headers.get("date"))
+        received_at = self._parse_internal_date(data.get("internalDate")) or self._parse_date(
+            headers.get("date")
+        )
+        recipients = [
+            address.strip().lower()
+            for _name, address in getaddresses(
+                [headers.get("to", ""), headers.get("cc", "")]
+            )
+            if "@" in address
+        ]
+        list_id = (headers.get("list-id") or "").strip()[:255] or None
+        precedence = (headers.get("precedence") or "").strip().lower()
+        auto_submitted = (headers.get("auto-submitted") or "").strip().lower()
+        is_bulk = bool(headers.get("list-unsubscribe") or list_id or precedence in BULK_PRECEDENCE)
+        is_automated = bool(auto_submitted and auto_submitted != "no") or bool(
+            AUTOMATED_LOCAL_PART.match(sender_email.split("@", 1)[0])
+        )
 
         body_text: str | None = None
         body_html: str | None = None
@@ -784,7 +1139,19 @@ class GmailService:
             is_starred="STARRED" in label_ids,
             is_important="IMPORTANT" in label_ids,
             labels=label_ids,
+            recipients=recipients[:50],
+            list_id=list_id,
+            is_bulk=is_bulk,
+            is_automated=is_automated,
         )
+
+    @staticmethod
+    def _parse_internal_date(raw: Any) -> datetime | None:
+        """Gmail's internalDate (ms since epoch) — reliable, unlike the sender-controlled Date header."""
+        try:
+            return datetime.fromtimestamp(int(raw) / 1000, tz=UTC)
+        except (TypeError, ValueError, OverflowError, OSError):
+            return None
 
     @staticmethod
     def _parse_sender(raw: str) -> tuple[str | None, str]:

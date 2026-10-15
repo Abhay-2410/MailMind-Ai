@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from urllib.parse import parse_qs, urlparse
 
 from app.core.config import get_settings
+from app.models.account import Account
 from app.models.user_settings import UserSettings
 from app.services.auth_service import AuthService, GoogleTokenBundle, GoogleUserInfo
+from app.utils.encryption import decrypt_token
 
 
 @pytest.mark.asyncio
@@ -229,7 +231,7 @@ async def test_upsert_user_does_not_revoke_same_refresh_token(
 
 
 @pytest.mark.asyncio
-async def test_upsert_user_revokes_when_refresh_token_changes(
+async def test_upsert_user_never_revokes_on_new_refresh_token(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -264,9 +266,14 @@ async def test_upsert_user_revokes_when_refresh_token_changes(
     )
 
     await auth_service.upsert_user_from_google(db_session, first, info)
-    await auth_service.upsert_user_from_google(db_session, second, info)
+    user = await auth_service.upsert_user_from_google(db_session, second, info)
 
-    assert revoke_calls == ["refresh-old"]
+    # Revoking any token from the old grant revokes the whole grant, including the new tokens.
+    assert revoke_calls == []
+    account = (
+        await db_session.execute(select(Account).where(Account.user_id == user.id))
+    ).scalar_one()
+    assert decrypt_token(account.refresh_token_encrypted) == "refresh-new"
 
 
 @pytest.mark.asyncio

@@ -23,20 +23,14 @@ def parse_label_ids(labels: str | list[str] | None) -> list[str]:
     return parsed if isinstance(parsed, list) else []
 
 
-def infer_category_from_gmail_labels(
-    labels: str | list[str] | None,
-    *,
-    is_important: bool = False,
-) -> EmailCategory | None:
-    """Map Gmail tab/category labels to MailMind categories."""
-    label_ids = parse_label_ids(labels)
+def infer_category_from_gmail_labels(labels: str | list[str] | None) -> EmailCategory | None:
+    """Map Gmail tab labels to MailMind categories.
 
-    if is_important or "IMPORTANT" in label_ids:
-        return EmailCategory.IMPORTANT
-
-    for label_id in label_ids:
+    Gmail's IMPORTANT flag is a priority signal, not a content category; it feeds
+    priority_score instead (see classifier.compute_priority).
+    """
+    for label_id in parse_label_ids(labels):
         mapped = GMAIL_LABEL_TO_CATEGORY.get(label_id)
         if mapped is not None:
             return mapped
-
     return None

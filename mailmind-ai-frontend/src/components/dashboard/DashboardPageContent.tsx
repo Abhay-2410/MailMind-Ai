@@ -23,7 +23,8 @@ export function DashboardPageContent() {
   const isDemoUser = userEmail === "demo@example.com";
   const { data, isLoading, isError, refetch } = useDashboard();
   const intelligence = useDashboardIntelligence(data);
-  const { isSyncing, syncDetail, syncPhase, syncError, triggerFullSync } = useSyncStatus();
+  const { isSyncing, syncDetail, syncPhase, syncError, needsReconnect, triggerFullSync } =
+    useSyncStatus();
 
   if (isLoading) {
     return <DashboardSkeleton />;
@@ -84,6 +85,7 @@ export function DashboardPageContent() {
         syncPhase={syncPhase}
         syncDetail={syncDetail}
         syncError={syncError?.message ?? null}
+        needsReconnect={needsReconnect}
         onSync={triggerFullSync}
       />
 

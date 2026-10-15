@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "MailMind AI"
     APP_ENV: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = False
+    # Logs every SQL statement with parameters (includes email contents) — keep off unless debugging queries.
+    SQL_ECHO: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
     HOST: str = "0.0.0.0"
@@ -32,7 +34,16 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     DATABASE_URL: str = "postgresql+asyncpg://mailmind:mailmind@localhost:5432/mailmind"
+    # Direct (non-PgBouncer) URL from Neon; preferred because asyncpg prepared statements
+    # break behind transaction-mode poolers.
+    DATABASE_URL_UNPOOLED: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Set to "1" by the Vercel runtime. Serverless mode has no long-lived process, so
+    # background loops are replaced by client-driven sync steps and a cron endpoint.
+    VERCEL: str = ""
+    # Vercel Cron sends "Authorization: Bearer $CRON_SECRET".
+    CRON_SECRET: str = ""
 
     JWT_SECRET_KEY: str = Field(min_length=32)
     JWT_ALGORITHM: str = "HS256"
@@ -51,7 +62,18 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     # Groq — https://console.groq.com/keys (used by inbox assistant by default)
     GROQ_API_KEY: str = ""
-    GROQ_ASSISTANT_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_ASSISTANT_MODEL: str = "openai/gpt-oss-20b"
+    # Larger Groq model retried for low-confidence categorizations (empty disables escalation).
+    AI_ESCALATION_MODEL: str = "openai/gpt-oss-120b"
+
+    # Server-side incremental Gmail sync interval; 0 disables (then only open browser tabs sync).
+    BACKGROUND_SYNC_INTERVAL_SECONDS: int = 30
+
+    # Gmail push notifications (users.watch -> Pub/Sub push subscription -> /api/v1/gmail/push).
+    # Leave GMAIL_PUBSUB_TOPIC empty to disable; polling sync keeps working either way.
+    GMAIL_PUBSUB_TOPIC: str = ""
+    GMAIL_PUSH_AUDIENCE: str = ""
+    GMAIL_PUSH_SERVICE_ACCOUNT: str = ""
 
     RATE_LIMIT_PER_MINUTE: int = 60
 
@@ -60,20 +82,34 @@ class Settings(BaseSettings):
         return self.APP_ENV == "production"
 
     @property
+    def is_serverless(self) -> bool:
+        return self.VERCEL.strip() == "1"
+
+    @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     @staticmethod
     def _normalize_database_url(url: str) -> str:
         if url.startswith("postgres://"):
-            return "postgresql+asyncpg://" + url[len("postgres://") :]
-        if url.startswith("postgresql://") and "+asyncpg" not in url:
-            return "postgresql+asyncpg://" + url[len("postgresql://") :]
-        return url
+            url = "postgresql+asyncpg://" + url[len("postgres://") :]
+        elif url.startswith("postgresql://") and "+asyncpg" not in url:
+            url = "postgresql+asyncpg://" + url[len("postgresql://") :]
+        parsed = urlparse(url)
+        if not parsed.query:
+            return url
+        # libpq-style params (Neon/Vercel URLs) are not asyncpg connect() kwargs.
+        params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        sslmode = params.pop("sslmode", None)
+        params.pop("channel_binding", None)
+        if sslmode and sslmode != "disable" and "ssl" not in params:
+            params["ssl"] = "require"
+        return urlunparse(parsed._replace(query=urlencode(params)))
 
     @model_validator(mode="after")
     def normalize_runtime_urls(self) -> "Settings":
-        object.__setattr__(self, "DATABASE_URL", self._normalize_database_url(self.DATABASE_URL))
+        url = self.DATABASE_URL_UNPOOLED.strip() or self.DATABASE_URL
+        object.__setattr__(self, "DATABASE_URL", self._normalize_database_url(url))
         return self
 
     @property

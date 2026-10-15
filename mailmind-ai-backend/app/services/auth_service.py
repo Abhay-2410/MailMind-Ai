@@ -285,16 +285,6 @@ class AuthService:
         encrypted_access = encrypt_token(tokens.access_token, settings=self.settings)
         encrypted_refresh = encrypt_token(tokens.refresh_token, settings=self.settings)
 
-        previous_refresh_plain: str | None = None
-        if account and account.refresh_token_encrypted:
-            try:
-                previous_refresh_plain = decrypt_token(
-                    account.refresh_token_encrypted,
-                    settings=self.settings,
-                )
-            except AppError:
-                previous_refresh_plain = None
-
         if account is None:
             account = Account(
                 user_id=user.id,
@@ -319,19 +309,8 @@ class AuthService:
 
         await db.commit()
         await db.refresh(user)
-
-        # Only revoke when Google issued a different refresh token (compare plaintext).
-        # Encrypted blobs differ every encrypt() call even for the same token.
-        if (
-            previous_refresh_plain
-            and tokens.refresh_token
-            and previous_refresh_plain != tokens.refresh_token
-        ):
-            try:
-                await self.revoke_google_token(previous_refresh_plain)
-            except Exception:
-                pass
-
+        # Never revoke the previous refresh token here: Google's revoke endpoint drops the
+        # whole grant for this client+user, which also kills the tokens just issued.
         return user
 
     async def get_or_create_demo_user(self, db: AsyncSession) -> User:

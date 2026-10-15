@@ -21,7 +21,7 @@ export function InboxPage() {
   const { view, meta } = useInboxView();
   const { page, setPage, setViewFilter, setCategory, setSearch } = useInboxStore();
   const { data, isLoading, isFetching, isError, refetch } = useInbox();
-  const { isSyncing, syncDetail, syncPhase, syncStatus, syncError, triggerFullSync } =
+  const { isSyncing, syncDetail, syncPhase, syncStatus, syncError, needsReconnect, triggerFullSync } =
     useSyncStatus();
 
   useEffect(() => {
@@ -44,14 +44,22 @@ export function InboxPage() {
       })}`
     : "Pull the latest messages from Gmail";
 
+  const gmailTotal = syncStatus?.gmail_total;
+  const storedCount = syncStatus?.stored_count;
+  const coverageLabel =
+    gmailTotal != null && storedCount != null && gmailTotal > 0
+      ? `${formatNumber(Math.min(storedCount, gmailTotal))} of ${formatNumber(gmailTotal)} Gmail messages synced`
+      : null;
+
   const statusLine = syncError
     ? syncError.message
     : isSyncing
       ? syncDetail ?? "Syncing inbox…"
-      : lastSyncedLabel;
+      : [lastSyncedLabel, coverageLabel].filter(Boolean).join(" · ");
 
-  const syncButtonLabel =
-    syncPhase === "categorizing"
+  const syncButtonLabel = needsReconnect
+    ? SYNC_BUTTON_LABEL.reconnect
+    : syncPhase === "categorizing" && isSyncing
       ? SYNC_BUTTON_LABEL.categorizing
       : isSyncing
         ? SYNC_BUTTON_LABEL.running

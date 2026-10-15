@@ -10,6 +10,7 @@ interface DashboardHeroProps {
   syncPhase?: string;
   syncDetail?: string | null;
   syncError?: string | null;
+  needsReconnect?: boolean;
   onSync: () => void;
 }
 
@@ -19,10 +20,12 @@ export function DashboardHero({
   syncPhase,
   syncDetail,
   syncError,
+  needsReconnect,
   onSync,
 }: DashboardHeroProps) {
-  const buttonLabel =
-    syncPhase === "categorizing"
+  const buttonLabel = needsReconnect
+    ? SYNC_BUTTON_LABEL.reconnect
+    : syncPhase === "categorizing" && isSyncing
       ? SYNC_BUTTON_LABEL.categorizing
       : isSyncing
         ? SYNC_BUTTON_LABEL.running

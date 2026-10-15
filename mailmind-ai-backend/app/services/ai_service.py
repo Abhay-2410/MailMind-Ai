@@ -5,14 +5,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.models import get_default_model_id, get_model_by_id, list_available_models
+from app.ai.models import get_default_model_id, get_model_by_id, list_available_models, resolve_model_id
 from app.ai.openrouter import get_provider
-from app.ai.prompts.categorize import (
-    BATCH_CATEGORIZE_SYSTEM,
-    CATEGORIZE_SYSTEM,
-    build_batch_categorize_prompt,
-    build_categorize_prompt,
-)
+from app.ai.prompts.categorize import CATEGORIZE_SYSTEM, build_categorize_prompt
 from app.ai.prompts.reply import REPLY_SYSTEM, build_reply_prompt
 from app.ai.prompts.search import SEARCH_SYSTEM, build_search_prompt
 from app.ai.prompts.summarize import SUMMARIZE_SYSTEM, build_summarize_prompt
@@ -20,7 +15,7 @@ from app.ai.provider import AICompletionResult, AIProvider
 from app.core.config import Settings, get_settings
 from app.core.exceptions import AppError
 from app.models.ai_usage import AIActionType, AIUsage
-from app.models.category import Category, EmailCategory
+from app.models.category import Category, CategorySource, EmailCategory
 from app.models.email import Email
 from app.models.summary import PriorityLevel as DBPriorityLevel
 from app.models.summary import Summary
@@ -60,13 +55,12 @@ class AIService:
         user_settings = result.scalar_one_or_none()
         if user_settings:
             model = get_model_by_id(user_settings.ai_model)
-            provider = model.provider.value if model is not None else user_settings.ai_provider
-            model_id = user_settings.ai_model
-            if self._provider_key_available(provider):
-                return provider, model_id
+            # Unknown ids are usually decommissioned models; fall through to the default.
+            if model is not None and self._provider_key_available(model.provider.value):
+                return model.provider.value, model.id
 
         if self.settings.GROQ_API_KEY:
-            return "groq", self._default_groq_model()
+            return "groq", resolve_model_id(self._default_groq_model())
 
         default_id = get_default_model_id()
         default = get_model_by_id(default_id)
@@ -279,14 +273,20 @@ class AIService:
         user: User,
         email_id: UUID,
     ) -> CategorizeEmailResponse:
+        from app.services.categorization_service import CategorizationService, signals_for_email
+        from app.services.classifier import CONTENT_CATEGORIES, compute_priority
+
         email = await self._get_user_email(db, user.id, email_id)
         provider_name, model_id = await self._resolve_model(db, user.id)
         provider = self._get_provider(provider_name)
 
+        signals = signals_for_email(email)
+        hints = [flag for flag, on in (("bulk", signals.is_bulk), ("automated", signals.is_automated)) if on]
         user_prompt = build_categorize_prompt(
             sender=email.sender,
             subject=email.subject,
             preview=email.preview or email.body_text or "",
+            signals=", ".join(hints) or "none",
         )
 
         result = await provider.complete_json(
@@ -300,13 +300,10 @@ class AIService:
         except json.JSONDecodeError as exc:
             raise AppError("AI returned invalid category format", status_code=502) from exc
 
-        category_raw = str(parsed.get("category", "updates")).lower()
-        try:
-            category = EmailCategory(category_raw)
-        except ValueError:
+        category = self._coerce_category(parsed.get("category"))
+        if category not in CONTENT_CATEGORIES:
             category = EmailCategory.UPDATES
-
-        confidence = float(parsed.get("confidence", 0.5))
+        confidence = self._coerce_confidence(parsed.get("confidence"))
 
         category_result = await db.execute(select(Category).where(Category.email_id == email.id))
         category_row = category_result.scalar_one_or_none()
@@ -314,9 +311,12 @@ class AIService:
             category_row = Category(email_id=email.id)
             db.add(category_row)
 
-        category_row.category = category
-        category_row.confidence = confidence
-        category_row.model_used = model_id
+        if category_row.source != CategorySource.USER.value:
+            category_row.category = category
+            category_row.confidence = confidence
+            category_row.model_used = model_id
+            category_row.source = CategorySource.AI.value
+            category_row.reason = f"AI ({model_id})"
 
         await self._track_usage(
             db,
@@ -329,91 +329,21 @@ class AIService:
             total_tokens=result.total_tokens,
             metadata={"email_id": str(email_id)},
         )
+        ctx = await CategorizationService(self).load_context(db, user)
+        email.priority_score = compute_priority(signals, category_row.category, ctx)
         await db.commit()
 
         return CategorizeEmailResponse(
             email_id=email.id,
-            category=EmailCategoryLabel(category.value),
-            confidence=confidence,
-            model_used=model_id,
+            category=EmailCategoryLabel(category_row.category.value),
+            confidence=category_row.confidence,
+            model_used=category_row.model_used or model_id,
         )
-
-    async def categorize_emails(
-        self,
-        db: AsyncSession,
-        user: User,
-        emails: list[Email],
-        *,
-        batch_size: int = 15,
-    ) -> int:
-        """Categorize a list of emails in batched AI calls. Returns count categorized.
-
-        Resilient by design: any batch that fails (rate limit, parse error) is
-        skipped so the surrounding sync flow still succeeds.
-        """
-        if not emails:
-            return 0
-
-        provider_name, model_id = await self._resolve_model(db, user.id)
-        provider = self._get_provider(provider_name)
-        categorized = 0
-
-        for start in range(0, len(emails), batch_size):
-            chunk = emails[start : start + batch_size]
-            payload = [
-                {
-                    "index": idx,
-                    "sender": email.sender,
-                    "subject": email.subject,
-                    "preview": email.preview or email.body_text or "",
-                }
-                for idx, email in enumerate(chunk)
-            ]
-
-            try:
-                result = await provider.complete_json(
-                    model=model_id,
-                    system_prompt=BATCH_CATEGORIZE_SYSTEM,
-                    user_prompt=build_batch_categorize_prompt(emails=payload),
-                    max_tokens=1500,
-                )
-                parsed = json.loads(result.content)
-            except (AppError, json.JSONDecodeError) as exc:
-                logger.warning("Batch categorization skipped for chunk: %s", exc)
-                continue
-
-            results = parsed.get("results", []) if isinstance(parsed, dict) else []
-            for entry in results:
-                try:
-                    index = int(entry.get("index"))
-                    email = chunk[index]
-                except (TypeError, ValueError, IndexError, KeyError):
-                    continue
-
-                category = self._coerce_category(entry.get("category"))
-                confidence = self._coerce_confidence(entry.get("confidence"))
-                await self._upsert_category(db, email.id, category, confidence, model_id)
-                categorized += 1
-
-            await self._track_usage(
-                db,
-                user.id,
-                AIActionType.CATEGORIZE,
-                provider=result.provider,
-                model=result.model,
-                prompt_tokens=result.prompt_tokens,
-                completion_tokens=result.completion_tokens,
-                total_tokens=result.total_tokens,
-                metadata={"batch_size": len(chunk)},
-            )
-
-        await db.commit()
-        return categorized
 
     @staticmethod
     def _coerce_category(value: object) -> EmailCategory:
         try:
-            return EmailCategory(str(value).lower())
+            return EmailCategory(str(value).strip().lower())
         except ValueError:
             return EmailCategory.UPDATES
 
@@ -423,24 +353,6 @@ class AIService:
             return max(0.0, min(1.0, float(value)))
         except (TypeError, ValueError):
             return 0.5
-
-    async def _upsert_category(
-        self,
-        db: AsyncSession,
-        email_id: UUID,
-        category: EmailCategory,
-        confidence: float,
-        model_id: str,
-    ) -> None:
-        existing = await db.execute(select(Category).where(Category.email_id == email_id))
-        row = existing.scalar_one_or_none()
-        if row is None:
-            row = Category(email_id=email_id)
-            db.add(row)
-        row.category = category
-        row.confidence = confidence
-        row.model_used = model_id
-        await db.flush()
 
     async def translate_search_query(
         self,

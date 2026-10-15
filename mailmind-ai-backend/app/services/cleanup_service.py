@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from uuid import UUID
@@ -13,6 +12,7 @@ from app.db.session import AsyncSessionLocal
 from app.agents.primary_inbox_agent import PrimaryInboxAgent
 from app.agents.inbox_triage_agent import ImportanceTier as AgentImportanceTier
 from app.agents.inbox_triage_agent import InboxTriageAgent, TriageDecision
+from app.core.background import spawn
 from app.core.exceptions import AppError
 from app.models.account import Account
 from app.models.email import Email
@@ -167,7 +167,7 @@ class CleanupService:
                 logger.exception("Cleanup analyze job failed")
                 await cleanup_job_store.fail(job, str(exc))
 
-        asyncio.create_task(run())
+        spawn(run())
         return CleanupAnalyzeProgressResponse(
             job_id=job.job_id,
             category=payload.category,
@@ -475,7 +475,7 @@ class CleanupService:
                 logger.exception("Triage analyze job failed")
                 await triage_job_store.fail(job, str(exc))
 
-        asyncio.create_task(run())
+        spawn(run())
         return TriageAnalyzeProgressResponse(
             job_id=job.job_id,
             status="pending",

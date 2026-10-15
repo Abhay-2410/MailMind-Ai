@@ -6,17 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuth";
-import { ApiError, apiRequest } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { formatEmailDate } from "@/lib/format";
+import { startGmailReconnect } from "@/lib/gmailReconnect";
 import type { SettingsResponse } from "@/types/settings";
 
 interface GmailAccountsProps {
   settings: SettingsResponse;
-}
-
-interface GoogleReconnectResponse {
-  authorization_url: string;
-  state: string;
 }
 
 export function GmailAccounts({ settings }: GmailAccountsProps) {
@@ -29,12 +25,7 @@ export function GmailAccounts({ settings }: GmailAccountsProps) {
     setError(null);
     setReconnecting(true);
     try {
-      const origin = encodeURIComponent(window.location.origin);
-      const data = await apiRequest<GoogleReconnectResponse>(
-        `/auth/google/reconnect?origin=${origin}`,
-        { method: "POST" },
-      );
-      window.location.assign(data.authorization_url);
+      await startGmailReconnect();
     } catch (err) {
       setReconnecting(false);
       setError(

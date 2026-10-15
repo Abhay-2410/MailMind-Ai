@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from app.ai.models import resolve_model_id
 from app.ai.provider import AICompletionResult, AIProvider
 from app.core.config import Settings, get_settings
 from app.core.exceptions import AppError
@@ -91,6 +92,7 @@ class GroqProvider(AIProvider):
         max_tokens: int,
         json_mode: bool,
     ) -> dict[str, Any]:
+        model = resolve_model_id(model)
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
@@ -102,6 +104,11 @@ class GroqProvider(AIProvider):
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        if model.startswith("openai/gpt-oss"):
+            # Reasoning models: reasoning tokens count against max_tokens and the
+            # per-minute token budget, so keep it short and out of the response.
+            payload["reasoning_effort"] = "low"
+            payload["include_reasoning"] = False
         return payload
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:

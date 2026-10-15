@@ -1,7 +1,9 @@
+# Explicit project name keeps containers/volumes separate from other MailMind checkouts.
+name: mailmind-ai-3
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: mailmind-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: mailmind
@@ -19,7 +21,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: mailmind-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -35,7 +36,6 @@ services:
     build:
       context: ./mailmind-ai-backend
       dockerfile: Dockerfile
-    container_name: mailmind-backend
     restart: unless-stopped
     # Use env_file without Compose interpolating $ in JWT/CSRF secrets.
     # Pass literal values by doubling $$ in .env when needed, or keep secrets
@@ -43,6 +43,8 @@ services:
     env_file:
       - ./mailmind-ai-backend/.env
     environment:
+      # Inside the container "localhost" is the backend itself; use the compose service hosts.
+      DATABASE_URL: postgresql+asyncpg://mailmind:mailmind@postgres:5432/mailmind
       REDIS_URL: redis://redis:6379/0
       PORT: "8000"
       # Local Docker defaults — keep OAuth on this machine (not Vercel tunnel).

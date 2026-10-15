@@ -16,6 +16,7 @@ from app.schemas.dashboard import (
     DashboardResponse,
     DashboardStats,
 )
+from app.services.classifier import PRIORITY_THRESHOLD
 from app.utils.gmail_categories import infer_category_from_gmail_labels
 
 CATEGORY_LABELS: dict[EmailCategory, str] = {
@@ -67,7 +68,7 @@ class DashboardService:
         important = await db.scalar(
             select(func.count(Email.id)).where(
                 Email.user_id == user_id,
-                Email.is_important.is_(True),
+                Email.priority_score >= PRIORITY_THRESHOLD,
             )
         )
         ai_actions = await db.scalar(
@@ -108,7 +109,7 @@ class DashboardService:
             return []
 
         result = await db.execute(
-            select(Email.labels, Email.is_important, Category.category)
+            select(Email.labels, Category.category)
             .outerjoin(Category, Category.email_id == Email.id)
             .where(Email.user_id == user_id)
         )
@@ -116,13 +117,10 @@ class DashboardService:
         counts: dict[EmailCategory, int] = {category: 0 for category in EmailCategory}
         uncategorized = 0
 
-        for labels_json, is_important, db_category in result.all():
+        for labels_json, db_category in result.all():
             resolved = db_category
             if resolved is None:
-                resolved = infer_category_from_gmail_labels(
-                    labels_json,
-                    is_important=bool(is_important),
-                )
+                resolved = infer_category_from_gmail_labels(labels_json)
             if resolved is None:
                 uncategorized += 1
             else:

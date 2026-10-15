@@ -7,12 +7,9 @@ def test_infer_category_from_gmail_promotions() -> None:
     assert category == EmailCategory.PROMOTIONS
 
 
-def test_infer_category_important_takes_priority() -> None:
-    category = infer_category_from_gmail_labels(
-        ["INBOX", "IMPORTANT", "CATEGORY_PROMOTIONS"],
-        is_important=True,
-    )
-    assert category == EmailCategory.IMPORTANT
+def test_infer_category_ignores_gmail_important_flag() -> None:
+    category = infer_category_from_gmail_labels(["INBOX", "IMPORTANT", "CATEGORY_PROMOTIONS"])
+    assert category == EmailCategory.PROMOTIONS
 
 
 def test_infer_category_returns_none_for_inbox_only() -> None:

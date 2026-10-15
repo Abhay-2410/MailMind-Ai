@@ -58,12 +58,23 @@ export const SIDEBAR_NAV_ITEMS: SidebarNavItem[] = [
   },
 ];
 
-export function formatSyncProgress(fetched: number, newCount: number): string {
-  return `${fetched.toLocaleString()} imported · ${newCount.toLocaleString()} new`;
+export function formatSyncProgress(
+  listed: number,
+  fetched: number,
+  newCount: number,
+  gmailTotal?: number | null,
+): string {
+  if (fetched === 0) {
+    if (listed === 0) return "Connecting to Gmail…";
+    const of = gmailTotal ? ` of ${gmailTotal.toLocaleString()}` : "";
+    return `Checking Gmail · ${listed.toLocaleString()}${of} scanned`;
+  }
+  return `${fetched.toLocaleString()} downloaded · ${newCount.toLocaleString()} new`;
 }
 
 export const SYNC_BUTTON_LABEL = {
   idle: "Sync inbox",
   running: "Syncing…",
   categorizing: "Categorizing…",
+  reconnect: "Reconnect Gmail",
 } as const;

@@ -50,3 +50,5 @@ debug-*.log
 
 # Docker
 docker-data/
+.vercel
+.env*

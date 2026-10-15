@@ -1,0 +1,15 @@
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__
+**/.ruff_cache
+**/.pytest_cache
+**/.venv
+mailmind-ai-frontend/dist
+mailmind-ai-backend/Dockerfile
+mailmind-ai-backend/tests
+mailmind-ai-backend/_probe_token.py
+render.yaml
+docker-compose.yml
+*.ps1

@@ -36,6 +36,7 @@ async def test_dashboard_stats(db_session: AsyncSession) -> None:
         received_at=datetime.now(UTC),
         is_read=False,
         is_important=True,
+        priority_score=75,
     )
     email2 = Email(
         user_id=user.id,

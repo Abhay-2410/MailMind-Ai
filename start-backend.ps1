@@ -1,31 +1,9 @@
-# Start MailMind backend — Docker-first (migrations via entrypoint), local venv fallback.
+# Start MailMind backend - Docker-first (migrations via entrypoint), local venv fallback.
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $backend = Join-Path $root "mailmind-ai-backend"
-$composeFile = Join-Path $root "docker-compose.yml"
-
-function Stop-PortListeners {
-  param([int]$Port)
-  $pids = netstat -ano | findstr ":$Port " | ForEach-Object { ($_ -split '\s+')[-1] } | Sort-Object -Unique
-  foreach ($procId in $pids) {
-    if ($procId -match '^\d+$' -and $procId -ne '0') {
-      cmd /c "taskkill /F /PID $procId /T 2>nul" | Out-Null
-    }
-  }
-}
-
-function Wait-BackendReady {
-  param([int]$Port = 8000, [int]$TimeoutSec = 90)
-  $deadline = (Get-Date).AddSeconds($TimeoutSec)
-  do {
-    try {
-      $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/v1/health/ready" -TimeoutSec 3 -UseBasicParsing
-      if ($r.StatusCode -eq 200) { return $true }
-    } catch { }
-    Start-Sleep -Seconds 2
-  } while ((Get-Date) -lt $deadline)
-  return $false
-}
+. (Join-Path $root "scripts\common.ps1")
+$composeFile = $MailMindComposeFile
 
 function Read-EnvValue {
   param([string]$File, [string]$Key, [string]$Default)
@@ -49,25 +27,26 @@ if ($port -ne 8000) {
 }
 
 # --- Docker-first path ---
-$dockerOk = $false
-if (Get-Command docker -ErrorAction SilentlyContinue) {
-  try {
-    docker info 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { $dockerOk = $true }
-  } catch { $dockerOk = $false }
-}
+$dockerOk = Test-DockerAvailable
 
 if ($dockerOk) {
+  $conflicts = @(Get-ForeignPortContainers)
+  if ($conflicts.Count -gt 0) {
+    Write-Host "Ports needed by MailMind are held by containers from another project:" -ForegroundColor Red
+    $conflicts | ForEach-Object { Write-Host "  $($_.Name) (project '$($_.Project)') on :$($_.Port)" -ForegroundColor Red }
+    $names = ($conflicts | Select-Object -ExpandProperty Name -Unique) -join " "
+    Write-Host "Stop them first (data is kept):  docker stop $names" -ForegroundColor Yellow
+    exit 1
+  }
+
   Write-Host "Starting MailMind via Docker Compose (postgres + redis + backend)..." -ForegroundColor Cyan
-  Stop-PortListeners -Port 8000
-  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match "uvicorn.*app\.main:app" } |
-    ForEach-Object { cmd /c "taskkill /F /PID $($_.ProcessId) /T 2>nul" | Out-Null }
+  $null = Stop-RepoDevProcesses -Kind uvicorn
+  $null = Stop-PortListeners -Port 8000
 
   Set-Location $root
   docker compose -f $composeFile up -d --build postgres redis backend
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "Docker compose failed — falling back to local venv if available." -ForegroundColor Yellow
+    Write-Host "Docker compose failed - falling back to local venv if available." -ForegroundColor Yellow
     $dockerOk = $false
   } else {
     Write-Host "Waiting for backend readiness at http://localhost:8000 ..." -ForegroundColor Cyan
@@ -88,7 +67,7 @@ if ($dockerOk) {
 }
 
 # --- Local venv fallback ---
-Write-Host "Docker unavailable — using local venv (requires working Python + greenlet)." -ForegroundColor Yellow
+Write-Host "Docker unavailable - using local venv (requires working Python + greenlet)." -ForegroundColor Yellow
 
 if (-not (Test-Path "$backend\.venv\Scripts\uvicorn.exe")) {
   Write-Host "Backend venv not found. Create it first:" -ForegroundColor Red
@@ -98,12 +77,8 @@ if (-not (Test-Path "$backend\.venv\Scripts\uvicorn.exe")) {
   exit 1
 }
 
-foreach ($p in @(8000, 8001, 8002, 8003, 8020, $port)) {
-  Stop-PortListeners -Port $p
-}
-Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -and $_.CommandLine -match "uvicorn.*app\.main:app" } |
-  ForEach-Object { cmd /c "taskkill /F /PID $($_.ProcessId) /T 2>nul" | Out-Null }
+$null = Stop-RepoDevProcesses -Kind uvicorn
+$null = Stop-PortListeners -Port $port
 Start-Sleep -Seconds 1
 
 Set-Location $backend

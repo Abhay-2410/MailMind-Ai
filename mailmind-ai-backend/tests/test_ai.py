@@ -90,7 +90,7 @@ async def test_summarize_email(db_session: AsyncSession) -> None:
 
     assert response.summary_text == "Q2 review due Friday."
     assert response.priority_level.value == "high"
-    assert response.model_used == "llama-3.1-8b-instant"
+    assert response.model_used == "openai/gpt-oss-20b"
 
 
 @pytest.mark.asyncio

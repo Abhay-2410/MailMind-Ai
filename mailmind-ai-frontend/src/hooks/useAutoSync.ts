@@ -1,18 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { fetchSyncStatus, syncInbox, type SyncInboxOptions } from "@/hooks/useEmails";
+import { driveSync, fetchSyncStatus, syncInbox, type SyncInboxOptions } from "@/hooks/useEmails";
+import { isGmailReauthError } from "@/lib/api";
+import { startGmailReconnect } from "@/lib/gmailReconnect";
 import { formatSyncProgress } from "@/lib/navigation";
 import { useAuthStore } from "@/stores/authStore";
+import type { SyncStatusResponse } from "@/types/email";
 
 /** Near real-time incremental sync (Gmail History API on the backend). */
 const SYNC_POLL_MS = 15_000;
 const STATUS_POLL_MS = 1_000;
+const RECONCILE_STATUS_POLL_MS = 5_000;
 const IDLE_STATUS_POLL_MS = 15_000;
+const SMART_SYNC: SyncInboxOptions = { syncAll: true, auto: true };
+const RECONNECT_MESSAGE = "Gmail access expired — reconnect to keep your inbox in sync.";
+/** A drive step that returns this fast was a no-op (another tab holds the lease). */
+const DRIVE_MIN_STEP_MS = 2_000;
+const DRIVE_IDLE_WAIT_MS = 3_000;
+const DRIVE_MAX_RETRY_MS = 30_000;
+
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 /**
- * Full Gmail sync on login (background), then incremental sync every 15s.
- * Polls /inbox/sync/status while a full sync is running so the inbox updates live.
+ * Smart sync on login (full only for a first sync; otherwise a fast history sync, with a
+ * quiet daily re-list on the backend), then incremental sync every 15s.
  * Must be mounted once via SyncProvider.
  */
 export function useAutoSync() {
@@ -20,88 +32,146 @@ export function useAutoSync() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const userEmail = useAuthStore((s) => s.user?.email);
   const hasInitialSynced = useRef(false);
+  const [reconnectError, setReconnectError] = useState<Error | null>(null);
+  const enabled = isAuthenticated && userEmail !== "demo@example.com";
 
   const statusQuery = useQuery({
     queryKey: ["inbox-sync-status"],
     queryFn: fetchSyncStatus,
-    enabled: isAuthenticated && userEmail !== "demo@example.com",
-    refetchInterval: (query) =>
-      query.state.data?.status === "running" ? STATUS_POLL_MS : IDLE_STATUS_POLL_MS,
-  });
-
-  const phase = statusQuery.data?.phase ?? "idle";
-  const isBackgroundSyncing = statusQuery.data?.status === "running";
-
-  const { mutate, error, isPending } = useMutation({
-    mutationFn: (options: SyncInboxOptions = {}) => syncInbox(options),
-    onSuccess: (_data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: ["inbox-sync-status"] });
-      if (variables?.syncAll) {
-        return;
-      }
-      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    enabled,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data?.status !== "running") return IDLE_STATUS_POLL_MS;
+      return data.mode === "reconcile" ? RECONCILE_STATUS_POLL_MS : STATUS_POLL_MS;
     },
   });
 
-  useEffect(() => {
-    if (statusQuery.data?.status !== "running") {
-      if (statusQuery.data?.status === "completed" || statusQuery.data?.status === "failed") {
-        void queryClient.invalidateQueries({ queryKey: ["inbox"] });
-        void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  const status = statusQuery.data;
+  const phase = status?.phase ?? "idle";
+  const isJobRunning = status?.status === "running";
+  // Daily reconciles run quietly; only first/explicit full syncs block the UI.
+  const isVisibleJob = isJobRunning && status?.mode !== "reconcile";
+
+  const { mutate, error, isPending, variables } = useMutation({
+    mutationFn: (options: SyncInboxOptions = {}) => syncInbox(options),
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ["inbox-sync-status"] });
+      if (data.background) return;
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err) => {
+      if (isGmailReauthError(err)) {
+        void queryClient.invalidateQueries({ queryKey: ["inbox-sync-status"] });
       }
-      return;
+    },
+  });
+
+  const needsReconnect = Boolean(status?.needs_reconnect) || isGmailReauthError(error);
+  const isManualPending = isPending && Boolean(variables?.syncAll);
+  const isClientDriven = status?.driver === "client";
+
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const isDriving = useRef(false);
+
+  // Serverless backend: keep calling /sync/drive while a full sync is running.
+  useEffect(() => {
+    if (!enabled || !isClientDriven || !isJobRunning || isDriving.current) return;
+    isDriving.current = true;
+    void (async () => {
+      let retryMs = DRIVE_IDLE_WAIT_MS;
+      try {
+        while (enabledRef.current) {
+          const startedAt = Date.now();
+          let next: SyncStatusResponse;
+          try {
+            next = await driveSync();
+          } catch (err) {
+            if (isGmailReauthError(err)) {
+              void queryClient.invalidateQueries({ queryKey: ["inbox-sync-status"] });
+              return;
+            }
+            await sleep(retryMs);
+            retryMs = Math.min(retryMs * 2, DRIVE_MAX_RETRY_MS);
+            continue;
+          }
+          retryMs = DRIVE_IDLE_WAIT_MS;
+          queryClient.setQueryData(["inbox-sync-status"], next);
+          if (next.status !== "running") return;
+          if (Date.now() - startedAt < DRIVE_MIN_STEP_MS) await sleep(DRIVE_IDLE_WAIT_MS);
+        }
+      } finally {
+        isDriving.current = false;
+      }
+    })();
+  }, [enabled, isClientDriven, isJobRunning, queryClient]);
+
+  useEffect(() => {
+    if (!status) return;
+    if (status.status === "running" && status.mode === "reconcile") return;
+    if (status.status === "running" || status.status === "completed" || status.status === "failed") {
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     }
-
-    void queryClient.invalidateQueries({ queryKey: ["inbox"] });
-    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-  }, [
-    statusQuery.data?.status,
-    statusQuery.data?.phase,
-    statusQuery.data?.fetched_count,
-    statusQuery.data?.new_count,
-    queryClient,
-  ]);
+  }, [status?.status, status?.phase, status?.fetched_count, status?.new_count, status?.mode, queryClient]);
 
   useEffect(() => {
-    if (!isAuthenticated || hasInitialSynced.current) return;
-    if (userEmail === "demo@example.com") return;
-
+    if (!enabled || hasInitialSynced.current) return;
     hasInitialSynced.current = true;
-    mutate({ syncAll: true });
-  }, [isAuthenticated, userEmail, mutate]);
+    mutate(SMART_SYNC);
+  }, [enabled, mutate]);
 
   useEffect(() => {
-    if (!isAuthenticated || userEmail === "demo@example.com") return;
+    if (!enabled || needsReconnect) return;
 
     const intervalId = window.setInterval(() => {
-      if (isPending || isBackgroundSyncing) return;
+      if (isPending || isJobRunning) return;
       mutate({ incremental: true, maxResults: 200 });
     }, SYNC_POLL_MS);
 
     return () => window.clearInterval(intervalId);
-  }, [isAuthenticated, userEmail, mutate, isBackgroundSyncing, isPending]);
+  }, [enabled, mutate, isJobRunning, isPending, needsReconnect]);
 
   const syncDetail = (() => {
-    if (!isBackgroundSyncing || !statusQuery.data) return null;
+    if (!isVisibleJob || !status) return null;
     if (phase === "categorizing") {
-      return "Categorizing emails with AI…";
+      return "Categorizing emails…";
     }
-    return formatSyncProgress(statusQuery.data.fetched_count, statusQuery.data.new_count);
+    return formatSyncProgress(
+      status.listed_count,
+      status.fetched_count,
+      status.new_count,
+      status.gmail_total,
+    );
   })();
 
-  const syncError =
-    error ??
-    (statusQuery.data?.status === "failed" && statusQuery.data.error
-      ? new Error(statusQuery.data.error)
-      : null);
+  const syncError: Error | null = needsReconnect
+    ? new Error(RECONNECT_MESSAGE)
+    : reconnectError ??
+      error ??
+      (status?.status === "failed" && status.mode !== "reconcile" && status.error
+        ? new Error(status.error)
+        : null);
+
+  const triggerSync = () => {
+    if (needsReconnect) {
+      setReconnectError(null);
+      startGmailReconnect().catch(() =>
+        setReconnectError(new Error("Could not start Gmail reconnect. Try signing in again.")),
+      );
+      return;
+    }
+    mutate(SMART_SYNC);
+  };
 
   return {
-    isSyncing: isBackgroundSyncing,
+    isSyncing: isVisibleJob || isManualPending,
     syncPhase: phase,
-    syncStatus: statusQuery.data,
+    syncStatus: status,
     syncDetail,
     syncError,
-    triggerFullSync: () => mutate({ syncAll: true }),
+    needsReconnect,
+    triggerFullSync: triggerSync,
   };
 }

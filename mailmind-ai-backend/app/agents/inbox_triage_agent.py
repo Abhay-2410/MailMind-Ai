@@ -20,7 +20,7 @@ from app.utils.gmail_pagination_helpers import TriageCandidate
 logger = logging.getLogger(__name__)
 
 # Groq-hosted default; OpenRouter Claude kept as fallback when Groq is unavailable.
-GROQ_TRIAGE_MODEL = "llama-3.3-70b-versatile"
+GROQ_TRIAGE_MODEL = "openai/gpt-oss-120b"
 OPENROUTER_TRIAGE_MODEL = "anthropic/claude-sonnet-4-6"
 CONFIDENCE_THRESHOLD = 0.9
 DEFAULT_BATCH_SIZE = 15

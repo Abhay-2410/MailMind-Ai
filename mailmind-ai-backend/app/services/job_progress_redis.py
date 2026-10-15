@@ -15,14 +15,39 @@ def _key(kind: str, job_id: str) -> str:
     return f"mailmind:job:{kind}:{job_id}"
 
 
-async def save_job_snapshot(kind: str, job_id: str, payload: dict[str, Any]) -> None:
+async def save_job_snapshot(
+    kind: str,
+    job_id: str,
+    payload: dict[str, Any],
+    *,
+    ttl_seconds: int = JOB_TTL_SECONDS,
+) -> None:
     try:
         from app.core.redis import get_redis_client
 
         client = get_redis_client()
-        await client.setex(_key(kind, job_id), JOB_TTL_SECONDS, json.dumps(payload, default=str))
+        await client.setex(_key(kind, job_id), ttl_seconds, json.dumps(payload, default=str))
     except Exception as exc:  # noqa: BLE001
         logger.debug("Job snapshot save skipped: %s", exc)
+
+
+async def list_job_snapshots(kind: str) -> list[dict[str, Any]]:
+    try:
+        from app.core.redis import get_redis_client
+
+        client = get_redis_client()
+        snapshots: list[dict[str, Any]] = []
+        async for key in client.scan_iter(match=_key(kind, "*")):
+            raw = await client.get(key)
+            if not raw:
+                continue
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                snapshots.append(data)
+        return snapshots
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Job snapshot scan skipped: %s", exc)
+        return []
 
 
 async def load_job_snapshot(kind: str, job_id: str) -> dict[str, Any] | None:
